@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 300px;
+      font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+      background: #090d16;
+      color: #f8fafc;
+      padding: 16px;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #1e293b;
+      margin-bottom: 12px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .logo {
+      width: 30px;
+      height: 30px;
+      border-radius: 6px;
+      object-fit: contain;
+      background: #ffffff;
+      padding: 2px;
+    }
+    .title {
+      font-size: 14.5px;
+      font-weight: 700;
+      letter-spacing: -0.2px;
+    }
+    .ver {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 9.5px;
+      color: #64748b;
+      margin-top: 1px;
+    }
+    .status-pill {
+      font-family: monospace;
+      font-size: 9.5px;
+      background: rgba(16, 185, 129, 0.12);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    .desc {
+      font-size: 11.5px;
+      color: #94a3b8;
+      line-height: 1.5;
+      margin-bottom: 14px;
+    }
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 8px 10px;
+      border-radius: 5px;
+      font-size: 11.5px;
+      font-weight: 600;
+      text-decoration: none;
+      transition: all 0.15s;
+    }
+    .btn-primary {
+      grid-column: span 2;
+      background: #f8fafc;
+      color: #090d16;
+    }
+    .btn-primary:hover { background: #e2e8f0; }
+    .btn-secondary {
+      background: #111827;
+      color: #cbd5e1;
+      border: 1px solid #1e293b;
+    }
+    .btn-secondary:hover {
+      background: #1e293b;
+      color: #ffffff;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="brand">
+      <img src="SHlogo.png" onerror="this.src='https://raw.githubusercontent.com/naemazam/ScholarHere/main/SHlogo.png'" alt="ScholarHere" class="logo" />
+      <div>
+        <div class="title">ScholarHere</div>
+        <div class="ver">TERMINAL v4.0</div>
+      </div>
+    </div>
+    <span class="status-pill">ACTIVE</span>
+  </div>
+  <p class="desc">
+    Visit any Google Scholar profile to launch the <strong>Metric Evidence Explorer</strong>, <strong>Author Attribution Audit</strong>, and <strong>Lead h-index</strong> engine.
+  </p>
+  <div class="actions">
+    <a href="https://scholar.google.com" target="_blank" class="btn btn-primary">Launch Google Scholar ↗</a>
+    <a href="https://scholarhere.vercel.app/" target="_blank" class="btn btn-secondary">About Us ↗</a>
+    <a href="https://github.com/naemazam/ScholarHere" target="_blank" class="btn btn-secondary">GitHub Repo ↗</a>
+  </div>
+</body>
+</html>

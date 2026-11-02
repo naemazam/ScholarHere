@@ -1,11 +1,35 @@
 {
   "manifest_version": 3,
-  "name": "ScholarPulse Pro — Research Intelligence Terminal",
-  "version": "2.0.0",
-  "description": "High-density bibliometric terminal for Google Scholar: Lead h-index, Gini index, OpenAlex DOI/PDF enrichment, Scholar Comparison, and CSV/BibTeX export.",
+  "name": "ScholarHere — Research Intelligence & Bibliometric Terminal",
+  "short_name": "ScholarHere",
+  "version": "4.0.0",
+  "description": "Precision bibliometric terminal for Google Scholar: Metric Evidence Explorer, Author Attribution Audit, Lead h-index, and OpenAlex verification.",
+  "homepage_url": "https://scholarhere.vercel.app/",
+  "icons": {
+    "16": "SHlogo.png",
+    "32": "SHlogo.png",
+    "48": "SHlogo.png",
+    "128": "SHlogo.png"
+  },
+  "action": {
+    "default_icon": {
+      "16": "SHlogo.png",
+      "32": "SHlogo.png",
+      "48": "SHlogo.png",
+      "128": "SHlogo.png"
+    },
+    "default_title": "ScholarHere Terminal",
+    "default_popup": "popup.html"
+  },
   "permissions": ["storage"],
   "host_permissions": [
     "https://api.openalex.org/*"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["SHlogo.png"],
+      "matches": ["<all_urls>"]
+    }
   ],
   "content_scripts": [
     {
@@ -14,7 +38,8 @@
         "https://scholar.google.co.uk/citations*",
         "https://scholar.google.ca/citations*",
         "https://scholar.google.com.au/citations*",
-        "https://scholar.google.co.in/citations*"
+        "https://scholar.google.co.in/citations*",
+        "https://scholar.google.com.bd/citations*"
       ],
       "css": ["styles.css"],
       "js": ["content.js"],
