@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "ScholarHere — Research Intelligence & Bibliometric Terminal",
+  "name": "ScholarHere — Research Intelligence for Google Scholar & ORCID",
   "short_name": "ScholarHere",
-  "version": "4.0.0",
-  "description": "Precision bibliometric terminal for Google Scholar: Metric Evidence Explorer, Author Attribution Audit, Lead h-index, and OpenAlex verification.",
+  "version": "4.5.0",
+  "description": "Precision bibliometric terminal for Google Scholar & ORCID: Metric Evidence Explorer, Author Attribution Audit, Lead h-index, and OpenAlex verification.",
   "homepage_url": "https://scholarhere.vercel.app/",
   "icons": {
     "16": "SHlogo.png",
@@ -23,7 +23,8 @@
   },
   "permissions": ["storage"],
   "host_permissions": [
-    "https://api.openalex.org/*"
+    "https://api.openalex.org/*",
+    "https://pub.orcid.org/*"
   ],
   "web_accessible_resources": [
     {
@@ -39,7 +40,8 @@
         "https://scholar.google.ca/citations*",
         "https://scholar.google.com.au/citations*",
         "https://scholar.google.co.in/citations*",
-        "https://scholar.google.com.bd/citations*"
+        "https://scholar.google.com.bd/citations*",
+        "https://orcid.org/*"
       ],
       "css": ["styles.css"],
       "js": ["content.js"],

@@ -5,7 +5,13 @@
   const OFFICIAL_SITE = "https://scholarhere.vercel.app/";
   const GITHUB_RAW_LOGO = "https://raw.githubusercontent.com/naemazam/ScholarHere/main/SHlogo.png";
 
+  const IS_ORCID = window.location.hostname.includes("orcid.org");
+
   let openAlexCache = {};
+  let orcidRecordsCache = null;
+  let orcidSyncInProgress = false;
+  let activeOrcidId = null;
+
   let activeTab = "overview";
   let evidenceFilter = "ALL_HCORE";
   let isDarkMode = localStorage.getItem("sh_theme") === "dark";
@@ -17,6 +23,11 @@
       }
     } catch (_) {}
     return GITHUB_RAW_LOGO;
+  }
+
+  function extractOrcidId() {
+    const match = window.location.pathname.match(/(\d{4}-\d{4}-\d{4}-\d{3}[\dX])/i);
+    return match ? match[1].toUpperCase() : null;
   }
 
   const STOP_WORDS = new Set([
@@ -41,7 +52,7 @@
   function classifyVenue(venueStr) {
     const v = (venueStr || "").toLowerCase();
     if (!v) return { tier: "UNKNOWN", label: null };
-    if (v.includes("arxiv") || v.includes("biorxiv") || v.includes("medrxiv") || v.includes("ssrn")) {
+    if (v.includes("arxiv") || v.includes("biorxiv") || v.includes("medrxiv") || v.includes("ssrn") || v.includes("preprint")) {
       return { tier: "PREPRINT", label: "PREPRINT" };
     }
     for (const kw of ELITE_VENUES) {
@@ -58,20 +69,37 @@
   }
 
   function getScholarIdentity() {
-    const nameEl = document.getElementById("gsc_prf_in");
-    const affEl = document.querySelector(".gsc_prf_il");
-    const fullName = nameEl ? nameEl.textContent.trim() : "Unknown Scholar";
-    const affiliation = affEl ? affEl.textContent.trim() : "";
+    if (!IS_ORCID) {
+      const nameEl = document.getElementById("gsc_prf_in");
+      const affEl = document.querySelector(".gsc_prf_il");
+      const fullName = nameEl ? nameEl.textContent.trim() : "Unknown Scholar";
+      const affiliation = affEl ? affEl.textContent.trim() : "";
+      const clean = fullName.toLowerCase().replace(/[^a-z\s-]/g, "").split(/\s+/).filter(Boolean);
+      const lastName = clean.length ? clean[clean.length - 1] : "";
+      const firstInitial = clean.length ? clean[0][0] : "";
+      return { fullName, affiliation, lastName, firstInitial, orcid: null };
+    }
+
+    // ORCID Profile Identity Extraction
+    const orcidId = extractOrcidId();
+    const nameEl = document.querySelector("h1.orc-font-heading, .full-name, h1");
+    let fullName = nameEl ? nameEl.textContent.trim() : "";
+    if (!fullName || fullName.includes("0000-")) {
+      fullName = (document.title || "").split("(")[0].split("|")[0].split("-")[0].trim() || `ORCID ${orcidId}`;
+    }
+    const affEl = document.querySelector("app-affiliation-stack .title, .affiliation-data");
+    const affiliation = affEl ? affEl.textContent.trim() : `ORCID ${orcidId}`;
+
     const clean = fullName.toLowerCase().replace(/[^a-z\s-]/g, "").split(/\s+/).filter(Boolean);
     const lastName = clean.length ? clean[clean.length - 1] : "";
     const firstInitial = clean.length ? clean[0][0] : "";
-    return { fullName, affiliation, lastName, firstInitial };
+    return { fullName, affiliation, lastName, firstInitial, orcid: orcidId };
   }
 
   function isTargetAuthor(authorStr, identity) {
     if (!authorStr || !identity.lastName) return false;
     const clean = authorStr.toLowerCase().replace(/[^a-z\s-]/g, "").trim();
-    const parts = clean.split(/\s+/);
+    const parts = clean.split(/\s+/).filter(Boolean);
     if (!parts.includes(identity.lastName)) return false;
     if (identity.firstInitial && parts[0]) {
       return parts[0].startsWith(identity.firstInitial) || parts[0] === identity.lastName;
@@ -169,9 +197,199 @@
     btn.textContent = "Hide";
   }
 
+  // Automatic ORCID Dual-API Sync (OpenAlex ORCID Index + ORCID Public v3.0 Registry)
+  async function syncOrcidProfileData(orcidId) {
+    if (!orcidId || orcidSyncInProgress) return;
+    orcidSyncInProgress = true;
+    const recordsMap = new Map();
+
+    try {
+      // 1. Query OpenAlex by exact ORCID iD (gives citations, full authorships, exact author_position, venue, OA PDF)
+      const oaRes = await fetch(
+        `https://api.openalex.org/works?filter=authorships.author.orcid:${orcidId}&per-page=200&sort=cited_by_count:desc`
+      );
+      if (oaRes.ok) {
+        const oaData = await oaRes.json();
+        (oaData.results || []).forEach((w) => {
+          const title = (w.title || w.display_name || "").trim();
+          if (!title) return;
+          const normTitle = title.toLowerCase();
+          const authorships = w.authorships || [];
+          const fullAuthors = authorships.map((a) => (a.author && a.author.display_name) || a.raw_author_name).filter(Boolean);
+
+          // Find exact authorship entry matching this ORCID iD
+          const targetIdx = authorships.findIndex((a) => {
+            const aOrcid = (a.author && a.author.orcid) || a.raw_orcid || "";
+            return aOrcid.toUpperCase().includes(orcidId);
+          });
+
+          const venue =
+            (w.primary_location && w.primary_location.source && w.primary_location.source.display_name) ||
+            w.type ||
+            "";
+          const oaUrl = (w.open_access && w.open_access.oa_url) || null;
+          const doi = w.doi || null;
+
+          openAlexCache[normTitle] = {
+            doi,
+            oaUrl,
+            abstract: reconstructAbstract(w.abstract_inverted_index),
+            type: w.type || "article",
+            fullAuthors
+          };
+
+          recordsMap.set(normTitle, {
+            title,
+            authors: fullAuthors,
+            exactPos: targetIdx !== -1 ? targetIdx + 1 : null,
+            venue,
+            year: w.publication_year || 0,
+            citations: w.cited_by_count || 0,
+            doi,
+            oaUrl
+          });
+        });
+      }
+    } catch (_) {}
+
+    try {
+      // 2. Also query ORCID Public API v3.0 /works to catch any unindexed or brand-new works on their ORCID page
+      const orcidRes = await fetch(`https://pub.orcid.org/v3.0/${orcidId}/works`, {
+        headers: { Accept: "application/json" }
+      });
+      if (orcidRes.ok) {
+        const orcidJson = await orcidRes.json();
+        const groups = orcidJson.group || [];
+        groups.forEach((g) => {
+          const summary = g["work-summary"] && g["work-summary"][0];
+          if (!summary) return;
+          const title =
+            summary.title && summary.title.title && summary.title.title.value
+              ? summary.title.title.value.trim()
+              : "";
+          if (!title) return;
+          const normTitle = title.toLowerCase();
+          if (recordsMap.has(normTitle)) return;
+
+          const year =
+            summary["publication-date"] &&
+            summary["publication-date"].year &&
+            summary["publication-date"].year.value
+              ? parseInt(summary["publication-date"].year.value, 10)
+              : 0;
+          const venue =
+            summary["journal-title"] && summary["journal-title"].value
+              ? summary["journal-title"].value
+              : summary.type || "";
+
+          let doi = null;
+          const extIds =
+            (summary["external-ids"] && summary["external-ids"]["external-id"]) || [];
+          extIds.forEach((eid) => {
+            if (eid["external-id-type"] === "doi" && eid["external-id-value"]) {
+              doi = `https://doi.org/${eid["external-id-value"]}`;
+            }
+          });
+
+          recordsMap.set(normTitle, {
+            title,
+            authors: [],
+            exactPos: null,
+            venue,
+            year,
+            citations: 0,
+            doi,
+            oaUrl: null
+          });
+        });
+      }
+    } catch (_) {}
+
+    orcidRecordsCache = Array.from(recordsMap.values());
+    orcidSyncInProgress = false;
+    renderTerminal();
+  }
+
+  // Decorate ORCID Angular work cards on the page and wire them for live filtering
+  function annotateOrcidDOMCards(papersByNormTitle) {
+    const cards = Array.from(document.querySelectorAll("app-work-stack, app-work"));
+    cards.forEach((card) => {
+      const titleEl = card.querySelector("h4, .work-title, [id^='cy-work-title']");
+      if (!titleEl) return;
+      const title = titleEl.textContent.trim();
+      const p = papersByNormTitle.get(title.toLowerCase());
+      if (!p) return;
+
+      card.dataset.shRole = p.role;
+      card.dataset.shTier = p.venueTier;
+      card.dataset.shVel = p.velocity >= 8 ? "HIGH" : "NORM";
+      card.dataset.shSearch = `${p.title} ${p.authors.join(" ")} ${p.venue}`.toLowerCase();
+
+      let metaBar = card.querySelector(".sh-row-meta");
+      if (!metaBar) {
+        metaBar = document.createElement("div");
+        metaBar.className = "sh-row-meta";
+        metaBar.style.padding = "4px 12px 6px 12px";
+        card.appendChild(metaBar);
+      }
+
+      const posLabel = p.authorPos ? `${p.authorPos}/${p.authorCount}` : `?/${p.authorCount}`;
+      const roleTag =
+        p.role === "SOLO" ? `<span class="sh-tag sh-tag-solo">SOLO (1/1)</span>` :
+        p.role === "FIRST" ? `<span class="sh-tag sh-tag-first">1ST AUTHOR (${posLabel})</span>` :
+        p.role === "LAST" ? `<span class="sh-tag sh-tag-last">LAST / PI (${posLabel})</span>` :
+        `<span class="sh-tag sh-tag-mid">CO-AUTHOR (${posLabel})</span>`;
+
+      const citeBadge = `<span class="sh-tag sh-tag-solo">${p.citations} CITES</span>`;
+      const venueInfo = classifyVenue(p.venue);
+      const venueBadge = venueInfo.label ? `<span class="sh-tag sh-tag-elite">${venueInfo.label}</span>` : "";
+      const velBadge = p.velocity >= 8 ? `<span class="sh-tag sh-tag-vel">${p.velocity.toFixed(1)}/yr</span>` : "";
+
+      const oaCached = openAlexCache[title.toLowerCase()];
+      const oaBadge = oaCached && oaCached.oaUrl
+        ? `<a href="${oaCached.oaUrl}" target="_blank" class="sh-tag sh-tag-oa">OPEN PDF ↗</a>`
+        : "";
+      const doiBadge = oaCached && oaCached.doi
+        ? `<a href="${oaCached.doi}" target="_blank" class="sh-mini-link">DOI ↗</a>`
+        : "";
+
+      metaBar.innerHTML = `
+        <div class="sh-tag-list">
+          ${roleTag}
+          ${citeBadge}
+          ${venueBadge}
+          ${velBadge}
+          ${oaBadge}
+        </div>
+        <div class="sh-tag-list">
+          ${doiBadge}
+          <button class="sh-mini-link sh-inspect-btn">Inspect</button>
+          <button class="sh-mini-link sh-copy-bib">BibTeX</button>
+        </div>
+      `;
+
+      const bibBtn = metaBar.querySelector(".sh-copy-bib");
+      if (bibBtn) {
+        bibBtn.onclick = (e) => {
+          e.stopPropagation();
+          navigator.clipboard.writeText(generateBibTeX(p));
+          bibBtn.textContent = "COPIED";
+          setTimeout(() => { bibBtn.textContent = "BibTeX"; }, 1200);
+        };
+      }
+
+      const inspectBtn = metaBar.querySelector(".sh-inspect-btn");
+      if (inspectBtn) {
+        inspectBtn.onclick = (e) => {
+          e.stopPropagation();
+          inspectSinglePaper(p.title, card, inspectBtn);
+        };
+      }
+    });
+  }
+
   function analyzeProfile() {
     const identity = getScholarIdentity();
-    const rows = Array.from(document.querySelectorAll("#gsc_a_b .gsc_a_tr"));
 
     let firstCount = 0, lastCount = 0, soloCount = 0, midCount = 0;
     let tier1Count = 0, preprintCount = 0;
@@ -189,214 +407,336 @@
     const papers = [];
     let minYear = CURRENT_YEAR, maxYear = 1900;
 
-    rows.forEach((row, idx) => {
-      const titleEl = row.querySelector(".gsc_a_at");
-      const grayEls = row.querySelectorAll(".gs_gray");
-      const citeEl = row.querySelector(".gsc_a_ac");
-      const yearEl = row.querySelector(".gsc_a_hc");
-
-      if (!titleEl) return;
-
-      const title = titleEl.textContent.trim();
-      const oaCached = openAlexCache[title.toLowerCase()];
-      const authorsRaw = grayEls[0] ? grayEls[0].textContent.trim() : "";
-      const venueRaw = grayEls[1] ? grayEls[1].textContent.trim() : "";
-      const citations = parseInt((citeEl && citeEl.textContent.trim()) || "0", 10) || 0;
-      const year = parseInt((yearEl && yearEl.textContent.trim()) || "0", 10) || 0;
-
-      if (year > 1950 && year <= CURRENT_YEAR) {
-        if (year < minYear) minYear = year;
-        if (year > maxYear) maxYear = year;
-        yearBuckets[year] = (yearBuckets[year] || 0) + 1;
+    if (IS_ORCID) {
+      // Build source list from ORCID + OpenAlex cache, or fallback to visible ORCID DOM cards while syncing
+      let sourceRecords = orcidRecordsCache || [];
+      if (sourceRecords.length === 0) {
+        const domCards = Array.from(document.querySelectorAll("app-work-stack, app-work"));
+        sourceRecords = domCards.map((c) => {
+          const tEl = c.querySelector("h4, .work-title");
+          const text = c.textContent || "";
+          const yrMatch = text.match(/\b(19[7-9]\d|20[0-2]\d)\b/);
+          return tEl
+            ? {
+                title: tEl.textContent.trim(),
+                authors: [identity.fullName],
+                exactPos: 1,
+                venue: "",
+                year: yrMatch ? parseInt(yrMatch[1], 10) : 0,
+                citations: 0
+              }
+            : null;
+        }).filter(Boolean);
       }
 
-      // Use OpenAlex full author list if already resolved, else DOM authors
-      let authors = authorsRaw.split(",").map((a) => a.trim()).filter(Boolean);
-      let isTruncated = authors.includes("...");
-      let resolvedByOA = false;
+      const papersByNormTitle = new Map();
 
-      if (isTruncated && oaCached && oaCached.fullAuthors && oaCached.fullAuthors.length > 0) {
-        authors = oaCached.fullAuthors;
-        isTruncated = false;
-        resolvedByOA = true;
-      }
+      sourceRecords.forEach((rec, idx) => {
+        const title = rec.title;
+        const year = rec.year || 0;
+        const citations = rec.citations || 0;
+        const venueRaw = rec.venue || "";
+        const cleanAuthors = rec.authors && rec.authors.length ? rec.authors : [identity.fullName];
+        const authorCount = Math.max(1, cleanAuthors.length);
 
-      const cleanAuthors = authors.filter((a) => a !== "...");
-      const authorCount = Math.max(1, cleanAuthors.length);
-      const matchedIdx = cleanAuthors.findIndex((a) => isTargetAuthor(a, identity));
-      const authorPos = matchedIdx !== -1 ? matchedIdx + 1 : null;
-
-      let role = "MID";
-      let auditStatus = "VERIFIED";
-
-      if (!isTruncated && cleanAuthors.length === 1 && isTargetAuthor(cleanAuthors[0], identity)) {
-        role = "SOLO";
-        soloCount++;
-      } else if (cleanAuthors.length > 0 && isTargetAuthor(cleanAuthors[0], identity)) {
-        role = "FIRST";
-        firstCount++;
-      } else if (!isTruncated && cleanAuthors.length > 1 && isTargetAuthor(cleanAuthors[cleanAuthors.length - 1], identity)) {
-        role = "LAST";
-        lastCount++;
-      } else {
-        role = "MID";
-        midCount++;
-        if (isTruncated && matchedIdx === -1) {
-          auditStatus = "TRUNCATED_HIDDEN";
-        } else if (isTruncated) {
-          auditStatus = "TRUNCATED_LIST";
+        let authorPos = rec.exactPos;
+        if (!authorPos) {
+          const mIdx = cleanAuthors.findIndex((a) => isTargetAuthor(a, identity));
+          authorPos = mIdx !== -1 ? mIdx + 1 : 1;
         }
-      }
 
-      if (isTruncated) truncatedCount++;
-
-      // Team size buckets & Fractional Credit (1/N)
-      totalAuthorCountSum += authorCount;
-      const fracCredit = 1 / (isTruncated ? Math.max(authorCount + 2, 6) : authorCount);
-      fractionalCreditSum += fracCredit;
-
-      if (authorCount === 1 && !isTruncated) teamSolo++;
-      else if (authorCount <= 4 && !isTruncated) teamSmall++;
-      else if (authorCount <= 8 && !isTruncated) teamMed++;
-      else teamLarge++;
-
-      cleanAuthors.forEach((a) => {
-        if (isTargetAuthor(a, identity)) return;
-        const norm = a.trim();
-        if (!coauthorMap[norm]) {
-          coauthorMap[norm] = { name: norm, count: 0, citations: 0 };
+        if (year > 1950 && year <= CURRENT_YEAR) {
+          if (year < minYear) minYear = year;
+          if (year > maxYear) maxYear = year;
+          yearBuckets[year] = (yearBuckets[year] || 0) + 1;
         }
-        coauthorMap[norm].count += 1;
-        coauthorMap[norm].citations += citations;
+
+        let role = "MID";
+        if (authorCount === 1) {
+          role = "SOLO";
+          soloCount++;
+        } else if (authorPos === 1) {
+          role = "FIRST";
+          firstCount++;
+        } else if (authorPos === authorCount) {
+          role = "LAST";
+          lastCount++;
+        } else {
+          role = "MID";
+          midCount++;
+        }
+
+        totalAuthorCountSum += authorCount;
+        const fracCredit = 1 / authorCount;
+        fractionalCreditSum += fracCredit;
+
+        if (authorCount === 1) teamSolo++;
+        else if (authorCount <= 4) teamSmall++;
+        else if (authorCount <= 8) teamMed++;
+        else teamLarge++;
+
+        cleanAuthors.forEach((a, aIdx) => {
+          if (aIdx + 1 === authorPos || isTargetAuthor(a, identity)) return;
+          const norm = a.trim();
+          if (!coauthorMap[norm]) {
+            coauthorMap[norm] = { name: norm, count: 0, citations: 0 };
+          }
+          coauthorMap[norm].count += 1;
+          coauthorMap[norm].citations += citations;
+        });
+
+        const venueInfo = classifyVenue(venueRaw);
+        if (venueInfo.tier === "TIER_1") tier1Count++;
+        if (venueInfo.tier === "PREPRINT") preprintCount++;
+
+        totalCitations += citations;
+        allCites.push(citations);
+        if (role !== "MID") {
+          leadCites.push(citations);
+          leadCitationsSum += citations;
+        }
+
+        const age = year ? Math.max(1, CURRENT_YEAR - year + 1) : 1;
+        const velocity = citations / age;
+
+        title.toLowerCase().replace(/[^a-z0-9\s-]/g, "").split(/\s+/).forEach((w) => {
+          if (w.length > 3 && !STOP_WORDS.has(w)) {
+            wordFreq[w] = (wordFreq[w] || 0) + 1;
+          }
+        });
+
+        const paperObj = {
+          idx,
+          title,
+          authors: cleanAuthors,
+          authorPos,
+          authorCount,
+          isTruncated: false,
+          resolvedByOA: Boolean(orcidRecordsCache),
+          auditStatus: "VERIFIED",
+          fracCredit: Number((fracCredit * 100).toFixed(1)),
+          venue: venueRaw,
+          venueTier: venueInfo.tier,
+          year,
+          citations,
+          velocity: Number(velocity.toFixed(1)),
+          role
+        };
+
+        papers.push(paperObj);
+        papersByNormTitle.set(title.toLowerCase(), paperObj);
       });
 
-      const venueInfo = classifyVenue(venueRaw);
-      if (venueInfo.tier === "TIER_1") tier1Count++;
-      if (venueInfo.tier === "PREPRINT") preprintCount++;
+      annotateOrcidDOMCards(papersByNormTitle);
+    } else {
+      // GOOGLE SCHOLAR DOM ENGINE (Exact v4.0 Logic)
+      const rows = Array.from(document.querySelectorAll("#gsc_a_b .gsc_a_tr"));
 
-      totalCitations += citations;
-      allCites.push(citations);
-      if (role !== "MID") {
-        leadCites.push(citations);
-        leadCitationsSum += citations;
-      }
+      rows.forEach((row, idx) => {
+        const titleEl = row.querySelector(".gsc_a_at");
+        const grayEls = row.querySelectorAll(".gs_gray");
+        const citeEl = row.querySelector(".gsc_a_ac");
+        const yearEl = row.querySelector(".gsc_a_hc");
 
-      const age = year ? Math.max(1, CURRENT_YEAR - year + 1) : 1;
-      const velocity = citations / age;
+        if (!titleEl) return;
 
-      title.toLowerCase().replace(/[^a-z0-9\s-]/g, "").split(/\s+/).forEach((w) => {
-        if (w.length > 3 && !STOP_WORDS.has(w)) {
-          wordFreq[w] = (wordFreq[w] || 0) + 1;
+        const title = titleEl.textContent.trim();
+        const oaCached = openAlexCache[title.toLowerCase()];
+        const authorsRaw = grayEls[0] ? grayEls[0].textContent.trim() : "";
+        const venueRaw = grayEls[1] ? grayEls[1].textContent.trim() : "";
+        const citations = parseInt((citeEl && citeEl.textContent.trim()) || "0", 10) || 0;
+        const year = parseInt((yearEl && yearEl.textContent.trim()) || "0", 10) || 0;
+
+        if (year > 1950 && year <= CURRENT_YEAR) {
+          if (year < minYear) minYear = year;
+          if (year > maxYear) maxYear = year;
+          yearBuckets[year] = (yearBuckets[year] || 0) + 1;
+        }
+
+        let authors = authorsRaw.split(",").map((a) => a.trim()).filter(Boolean);
+        let isTruncated = authors.includes("...");
+        let resolvedByOA = false;
+
+        if (isTruncated && oaCached && oaCached.fullAuthors && oaCached.fullAuthors.length > 0) {
+          authors = oaCached.fullAuthors;
+          isTruncated = false;
+          resolvedByOA = true;
+        }
+
+        const cleanAuthors = authors.filter((a) => a !== "...");
+        const authorCount = Math.max(1, cleanAuthors.length);
+        const matchedIdx = cleanAuthors.findIndex((a) => isTargetAuthor(a, identity));
+        const authorPos = matchedIdx !== -1 ? matchedIdx + 1 : null;
+
+        let role = "MID";
+        let auditStatus = "VERIFIED";
+
+        if (!isTruncated && cleanAuthors.length === 1 && isTargetAuthor(cleanAuthors[0], identity)) {
+          role = "SOLO";
+          soloCount++;
+        } else if (cleanAuthors.length > 0 && isTargetAuthor(cleanAuthors[0], identity)) {
+          role = "FIRST";
+          firstCount++;
+        } else if (!isTruncated && cleanAuthors.length > 1 && isTargetAuthor(cleanAuthors[cleanAuthors.length - 1], identity)) {
+          role = "LAST";
+          lastCount++;
+        } else {
+          role = "MID";
+          midCount++;
+          if (isTruncated && matchedIdx === -1) {
+            auditStatus = "TRUNCATED_HIDDEN";
+          } else if (isTruncated) {
+            auditStatus = "TRUNCATED_LIST";
+          }
+        }
+
+        if (isTruncated) truncatedCount++;
+
+        totalAuthorCountSum += authorCount;
+        const fracCredit = 1 / (isTruncated ? Math.max(authorCount + 2, 6) : authorCount);
+        fractionalCreditSum += fracCredit;
+
+        if (authorCount === 1 && !isTruncated) teamSolo++;
+        else if (authorCount <= 4 && !isTruncated) teamSmall++;
+        else if (authorCount <= 8 && !isTruncated) teamMed++;
+        else teamLarge++;
+
+        cleanAuthors.forEach((a) => {
+          if (isTargetAuthor(a, identity)) return;
+          const norm = a.trim();
+          if (!coauthorMap[norm]) {
+            coauthorMap[norm] = { name: norm, count: 0, citations: 0 };
+          }
+          coauthorMap[norm].count += 1;
+          coauthorMap[norm].citations += citations;
+        });
+
+        const venueInfo = classifyVenue(venueRaw);
+        if (venueInfo.tier === "TIER_1") tier1Count++;
+        if (venueInfo.tier === "PREPRINT") preprintCount++;
+
+        totalCitations += citations;
+        allCites.push(citations);
+        if (role !== "MID") {
+          leadCites.push(citations);
+          leadCitationsSum += citations;
+        }
+
+        const age = year ? Math.max(1, CURRENT_YEAR - year + 1) : 1;
+        const velocity = citations / age;
+
+        title.toLowerCase().replace(/[^a-z0-9\s-]/g, "").split(/\s+/).forEach((w) => {
+          if (w.length > 3 && !STOP_WORDS.has(w)) {
+            wordFreq[w] = (wordFreq[w] || 0) + 1;
+          }
+        });
+
+        const paperObj = {
+          idx,
+          title,
+          authors: cleanAuthors,
+          authorPos,
+          authorCount,
+          isTruncated,
+          resolvedByOA,
+          auditStatus,
+          fracCredit: Number((fracCredit * 100).toFixed(1)),
+          venue: venueRaw,
+          venueTier: venueInfo.tier,
+          year,
+          citations,
+          velocity: Number(velocity.toFixed(1)),
+          role
+        };
+        papers.push(paperObj);
+
+        row.dataset.shRole = role;
+        row.dataset.shTier = venueInfo.tier;
+        row.dataset.shYear = String(year || 0);
+        row.dataset.shVel = velocity >= 10 ? "HIGH" : "NORM";
+        row.dataset.shSearch = `${title} ${authorsRaw} ${venueRaw}`.toLowerCase();
+
+        const td = row.querySelector(".gsc_a_t");
+        let metaBar = row.querySelector(".sh-row-meta");
+        if (!metaBar) {
+          metaBar = document.createElement("div");
+          metaBar.className = "sh-row-meta";
+          if (td) td.appendChild(metaBar);
+        }
+
+        const posLabel = authorPos ? `${authorPos}/${isTruncated ? authorCount + "+" : authorCount}` : `?/${authorCount}+`;
+        const roleTag =
+          role === "SOLO" ? `<span class="sh-tag sh-tag-solo">SOLO (1/1)</span>` :
+          role === "FIRST" ? `<span class="sh-tag sh-tag-first">1ST AUTHOR (${posLabel})</span>` :
+          role === "LAST" ? `<span class="sh-tag sh-tag-last">LAST / PI (${posLabel})</span>` :
+          `<span class="sh-tag sh-tag-mid">CO-AUTHOR (${posLabel})</span>`;
+
+        const venueBadge = venueInfo.label
+          ? `<span class="sh-tag sh-tag-elite">${venueInfo.label}</span>`
+          : "";
+
+        const velBadge = velocity >= 8
+          ? `<span class="sh-tag sh-tag-vel">${velocity.toFixed(1)}/yr</span>`
+          : "";
+
+        const oaBadge = oaCached && oaCached.oaUrl
+          ? `<a href="${oaCached.oaUrl}" target="_blank" class="sh-tag sh-tag-oa">OPEN PDF ↗</a>`
+          : "";
+        const doiBadge = oaCached && oaCached.doi
+          ? `<a href="${oaCached.doi}" target="_blank" class="sh-mini-link">DOI ↗</a>`
+          : "";
+
+        metaBar.innerHTML = `
+          <div class="sh-tag-list">
+            ${roleTag}
+            ${venueBadge}
+            ${velBadge}
+            ${oaBadge}
+          </div>
+          <div class="sh-tag-list">
+            ${doiBadge}
+            <button class="sh-mini-link sh-inspect-btn">Inspect</button>
+            <button class="sh-mini-link sh-copy-bib">BibTeX</button>
+          </div>
+        `;
+
+        const bibBtn = metaBar.querySelector(".sh-copy-bib");
+        if (bibBtn) {
+          bibBtn.onclick = (e) => {
+            e.stopPropagation();
+            navigator.clipboard.writeText(generateBibTeX(paperObj));
+            bibBtn.textContent = "COPIED";
+            setTimeout(() => { bibBtn.textContent = "BibTeX"; }, 1200);
+          };
+        }
+
+        const inspectBtn = metaBar.querySelector(".sh-inspect-btn");
+        if (inspectBtn && td) {
+          inspectBtn.onclick = (e) => {
+            e.stopPropagation();
+            inspectSinglePaper(title, td, inspectBtn);
+          };
         }
       });
+    }
 
-      const paperObj = {
-        idx,
-        title,
-        authors: cleanAuthors,
-        authorPos,
-        authorCount,
-        isTruncated,
-        resolvedByOA,
-        auditStatus,
-        fracCredit: Number((fracCredit * 100).toFixed(1)),
-        venue: venueRaw,
-        venueTier: venueInfo.tier,
-        year,
-        citations,
-        velocity: Number(velocity.toFixed(1)),
-        role
-      };
-      papers.push(paperObj);
-
-      row.dataset.shRole = role;
-      row.dataset.shTier = venueInfo.tier;
-      row.dataset.shYear = String(year || 0);
-      row.dataset.shVel = velocity >= 10 ? "HIGH" : "NORM";
-      row.dataset.shSearch = `${title} ${authorsRaw} ${venueRaw}`.toLowerCase();
-
-      const td = row.querySelector(".gsc_a_t");
-      let metaBar = row.querySelector(".sh-row-meta");
-      if (!metaBar) {
-        metaBar = document.createElement("div");
-        metaBar.className = "sh-row-meta";
-        if (td) td.appendChild(metaBar);
-      }
-
-      const posLabel = authorPos ? `${authorPos}/${isTruncated ? authorCount + "+" : authorCount}` : `?/${authorCount}+`;
-      const roleTag =
-        role === "SOLO" ? `<span class="sh-tag sh-tag-solo">SOLO (1/1)</span>` :
-        role === "FIRST" ? `<span class="sh-tag sh-tag-first">1ST AUTHOR (${posLabel})</span>` :
-        role === "LAST" ? `<span class="sh-tag sh-tag-last">LAST / PI (${posLabel})</span>` :
-        `<span class="sh-tag sh-tag-mid">CO-AUTHOR (${posLabel})</span>`;
-
-      const venueBadge = venueInfo.label
-        ? `<span class="sh-tag sh-tag-elite">${venueInfo.label}</span>`
-        : "";
-
-      const velBadge = velocity >= 8
-        ? `<span class="sh-tag sh-tag-vel">${velocity.toFixed(1)}/yr</span>`
-        : "";
-
-      const oaBadge = oaCached && oaCached.oaUrl
-        ? `<a href="${oaCached.oaUrl}" target="_blank" class="sh-tag sh-tag-oa">OPEN PDF ↗</a>`
-        : "";
-      const doiBadge = oaCached && oaCached.doi
-        ? `<a href="${oaCached.doi}" target="_blank" class="sh-mini-link">DOI ↗</a>`
-        : "";
-
-      metaBar.innerHTML = `
-        <div class="sh-tag-list">
-          ${roleTag}
-          ${venueBadge}
-          ${velBadge}
-          ${oaBadge}
-        </div>
-        <div class="sh-tag-list">
-          ${doiBadge}
-          <button class="sh-mini-link sh-inspect-btn">Inspect</button>
-          <button class="sh-mini-link sh-copy-bib">BibTeX</button>
-        </div>
-      `;
-
-      const bibBtn = metaBar.querySelector(".sh-copy-bib");
-      if (bibBtn) {
-        bibBtn.onclick = (e) => {
-          e.stopPropagation();
-          navigator.clipboard.writeText(generateBibTeX(paperObj));
-          bibBtn.textContent = "COPIED";
-          setTimeout(() => { bibBtn.textContent = "BibTeX"; }, 1200);
-        };
-      }
-
-      const inspectBtn = metaBar.querySelector(".sh-inspect-btn");
-      if (inspectBtn && td) {
-        inspectBtn.onclick = (e) => {
-          e.stopPropagation();
-          inspectSinglePaper(title, td, inspectBtn);
-        };
-      }
-    });
-
-    const total = rows.length || 1;
+    const total = papers.length || 1;
     const leadTotal = firstCount + lastCount + soloCount;
     const leadRatio = Math.round((leadTotal / total) * 100);
     const overallH = calcHIndex(allCites);
     const leadH = calcHIndex(leadCites);
     const careerYears = maxYear >= minYear ? Math.max(1, CURRENT_YEAR - minYear + 1) : 1;
     const citesPerYear = Math.round(totalCitations / careerYears);
-    const papersPerYear = (rows.length / careerYears).toFixed(1);
+    const papersPerYear = (papers.length / careerYears).toFixed(1);
     const gini = computeGini(allCites).toFixed(2);
 
-    // Metric Evidence Calculations (Sorted by Citations Descending)
     const sortedByCites = [...papers].sort((a, b) => b.citations - a.citations);
     const top3Cites = sortedByCites.slice(0, 3).reduce((acc, p) => acc + p.citations, 0);
     const paretoTop3Pct = totalCitations > 0 ? Math.round((top3Cites / totalCitations) * 100) : 0;
     const leadCiteSharePct = totalCitations > 0 ? Math.round((leadCitationsSum / totalCitations) * 100) : 0;
 
-    // Next h-index threshold gap calculation
     const nextHTarget = overallH + 1;
-    const candidatePaper = sortedByCites[overallH]; // 0-indexed rank overallH is the (h+1)th paper
+    const candidatePaper = sortedByCites[overallH];
     const citesNeededForNextH = candidatePaper ? Math.max(1, nextHTarget - candidatePaper.citations) : nextHTarget;
 
     const topCoauthors = Object.values(coauthorMap)
@@ -410,7 +750,7 @@
 
     return {
       identity,
-      totalPapers: rows.length,
+      totalPapers: papers.length,
       totalCitations,
       leadCitationsSum,
       leadCiteSharePct,
@@ -447,6 +787,13 @@
   }
 
   function triggerDeepScan(btn) {
+    if (IS_ORCID) {
+      const orcidId = extractOrcidId();
+      btn.textContent = "Syncing ORCID + OpenAlex...";
+      orcidRecordsCache = null;
+      syncOrcidProfileData(orcidId);
+      return;
+    }
     const moreBtn = document.getElementById("gsc_bpf_more");
     if (!moreBtn || moreBtn.disabled) {
       btn.textContent = "All Papers Loaded";
@@ -466,6 +813,10 @@
   }
 
   async function enrichWithOpenAlex(stats, btn) {
+    if (IS_ORCID) {
+      triggerDeepScan(btn);
+      return;
+    }
     btn.textContent = "Syncing OpenAlex...";
     const targetPapers = stats.papers.slice(0, 20);
     for (const p of targetPapers) {
@@ -513,18 +864,43 @@
     a.click();
   }
 
+  function locateMountTarget() {
+    if (!IS_ORCID) {
+      const gsHost = document.getElementById("gsc_art");
+      return gsHost ? { parent: gsHost.parentNode, before: gsHost } : null;
+    }
+    // Mount directly above the Works section on ORCID profile pages
+    const orcidWorks =
+      document.querySelector("app-works, #cy-works, .work-list, main .container") ||
+      document.querySelector("main");
+    if (orcidWorks) {
+      return { parent: orcidWorks.parentNode, before: orcidWorks };
+    }
+    return null;
+  }
+
   function renderTerminal() {
-    const host = document.getElementById("gsc_art");
-    if (!host) return;
+    if (IS_ORCID) {
+      const orcidId = extractOrcidId();
+      if (!orcidId) return;
+      if (activeOrcidId !== orcidId) {
+        activeOrcidId = orcidId;
+        orcidRecordsCache = null;
+        syncOrcidProfileData(orcidId);
+      }
+    }
+
+    const mount = locateMountTarget();
+    if (!mount || !mount.parent) return;
 
     const stats = analyzeProfile();
-    if (stats.totalPapers === 0) return;
+    if (stats.totalPapers === 0 && !IS_ORCID) return;
 
     let term = document.getElementById("sh-terminal");
     if (!term) {
       term = document.createElement("div");
       term.id = "sh-terminal";
-      host.parentNode.insertBefore(term, host);
+      mount.parent.insertBefore(term, mount.before);
     }
 
     if (isDarkMode) term.classList.add("sh-dark");
@@ -557,10 +933,9 @@
 
     const logoSrc = getLogoUrl();
 
-    // Filter rows for Metric Evidence Explorer
     const evidenceList = stats.sortedByCites.filter((p, index) => {
       const rank = index + 1;
-      if (evidenceFilter === "ALL_HCORE") return rank <= stats.overallH + 3;
+      if (evidenceFilter === "ALL_HCORE") return rank <= Math.max(stats.overallH + 3, 10);
       if (evidenceFilter === "LEAD_CORE") return p.role !== "MID";
       if (evidenceFilter === "HIGH_VEL") return p.velocity >= 8;
       return true;
@@ -573,13 +948,14 @@
           <div>
             <div class="sh-brand-name">
               ScholarHere
-              <span class="sh-badge-pro">TERMINAL v4.0</span>
+              <span class="sh-badge-pro">TERMINAL v4.5</span>
+              ${IS_ORCID ? `<span class="sh-badge-orcid">ORCID iD: ${stats.identity.orcid}</span>` : ""}
             </div>
-            <div class="sh-status">N=${stats.totalPapers} PAPERS • SPAN ${stats.minYear}–${CURRENT_YEAR} (${stats.careerYears}Y)</div>
+            <div class="sh-status">${orcidSyncInProgress ? "SYNCING ORCID + OPENALEX METRICS..." : `N=${stats.totalPapers} PAPERS • SPAN ${stats.minYear}–${CURRENT_YEAR} (${stats.careerYears}Y)`}</div>
           </div>
         </a>
         <div class="sh-toolbar">
-          <button class="sh-cmd-btn" id="sh-deep-scan" title="Auto-load all papers on this profile">Deep Scan All</button>
+          <button class="sh-cmd-btn" id="sh-deep-scan" title="Load all works">${IS_ORCID ? "Re-Sync ORCID" : "Deep Scan All"}</button>
           <button class="sh-cmd-btn" id="sh-enrich-oa" title="Verify DOIs, PDFs & full author lists via OpenAlex">Verify via OpenAlex</button>
           <button class="sh-cmd-btn" id="sh-pin-compare">${pinned && pinned.identity.fullName === stats.identity.fullName ? "Pinned ✓" : "Pin to Compare"}</button>
           <button class="sh-cmd-btn" id="sh-theme-toggle" title="Switch Light/Dark Theme">${isDarkMode ? "☀ Light" : "☾ Dark"}</button>
@@ -725,11 +1101,11 @@
             <tbody>
               ${evidenceList.map((p) => {
                 const rank = stats.sortedByCites.indexOf(p) + 1;
-                const inHCore = rank <= stats.overallH;
+                const inHCore = stats.overallH > 0 && rank <= stats.overallH;
                 const delta = p.citations - stats.overallH;
                 const badge = inHCore
                   ? `<span class="sh-status-tag sh-st-ok">IN h-CORE (+${delta} surplus)</span>`
-                  : `<span class="sh-status-tag sh-st-warn">NEEDS +${stats.overallH + 1 - p.citations} FOR h=${stats.overallH + 1}</span>`;
+                  : `<span class="sh-status-tag sh-st-warn">NEEDS +${Math.max(1, stats.overallH + 1 - p.citations)} FOR h=${stats.overallH + 1}</span>`;
                 return `
                   <tr>
                     <td class="sh-mono-num">#${rank}</td>
@@ -795,7 +1171,7 @@
                   ? `Pos ${p.authorPos} of ${p.isTruncated ? p.authorCount + "+" : p.authorCount}`
                   : `Hidden (> ${p.authorCount} authors)`;
                 const statusBadge = p.resolvedByOA
-                  ? `<span class="sh-status-tag sh-st-ok">RESOLVED VIA OPENALEX</span>`
+                  ? `<span class="sh-status-tag sh-st-ok">VERIFIED VIA OPENALEX</span>`
                   : p.auditStatus === "TRUNCATED_HIDDEN"
                   ? `<span class="sh-status-tag sh-st-danger">TRUNCATED "..." (HIDDEN MID/LAST)</span>`
                   : p.auditStatus === "TRUNCATED_LIST"
@@ -849,7 +1225,7 @@
       <div class="sh-panel ${activeTab === "compare" ? "active" : ""}" data-panel="compare">
         ${!pinned ? `
           <div style="padding:14px;color:var(--sh-text-secondary);">
-            Click <strong>"Pin to Compare"</strong> in the top toolbar on any scholar's profile, then open a second scholar's profile to benchmark them side-by-side.
+            Click <strong>"Pin to Compare"</strong> in the top toolbar on any Google Scholar or ORCID profile, then open a second scholar's profile to benchmark them side-by-side.
           </div>
         ` : `
           <table class="sh-data-table">
@@ -958,7 +1334,7 @@ Best regards,
       switchSummaryBtn.onclick = () => {
         const box = term.querySelector("#sh-email-box");
         box.value =
-`ScholarHere Bibliometric Audit — ${stats.identity.fullName}
+`ScholarHere Bibliometric Audit — ${stats.identity.fullName}${stats.identity.orcid ? ` (ORCID: ${stats.identity.orcid})` : ""}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 • Leadership Ratio: ${stats.leadRatio}% (${stats.firstCount + stats.soloCount} 1st/Solo | ${stats.lastCount} Last/PI)
 • Lead-Only h-index: ${stats.leadH} (Overall h-index: ${stats.overallH} | Lead Cite Share: ${stats.leadCiteSharePct}%)
@@ -981,10 +1357,11 @@ Audited via ScholarHere Terminal`;
       };
     }
 
-    // Bind Live Table Filters on Overview Tab
+    // Bind Live Table Filters on Overview Tab (Works on Google Scholar rows & ORCID work cards)
     const applyRowFilter = (mode, query) => {
       const q = (query || "").toLowerCase().trim();
-      document.querySelectorAll("#gsc_a_b .gsc_a_tr").forEach((row) => {
+      const selector = IS_ORCID ? "app-work-stack[data-sh-role], app-work[data-sh-role]" : "#gsc_a_b .gsc_a_tr";
+      document.querySelectorAll(selector).forEach((row) => {
         let matchMode = true;
         if (mode === "FIRST") matchMode = row.dataset.shRole === "FIRST" || row.dataset.shRole === "SOLO";
         else if (mode === "LAST") matchMode = row.dataset.shRole === "LAST";
@@ -1015,11 +1392,27 @@ Audited via ScholarHere Terminal`;
     }
   }
 
+  // Initial Boot
   renderTerminal();
 
-  const tbody = document.getElementById("gsc_a_b");
-  if (tbody) {
-    const observer = new MutationObserver(() => renderTerminal());
-    observer.observe(tbody, { childList: true });
+  if (!IS_ORCID) {
+    const tbody = document.getElementById("gsc_a_b");
+    if (tbody) {
+      const observer = new MutationObserver(() => renderTerminal());
+      observer.observe(tbody, { childList: true });
+    }
+  } else {
+    // Watch ORCID Angular app so the terminal mounts right as `app-works` finishes rendering
+    let orcidTimer = null;
+    const orcidObserver = new MutationObserver((mutations) => {
+      const external = mutations.some(
+        (m) => !m.target.closest || !m.target.closest("#sh-terminal, .sh-row-meta, .sh-abstract-drawer")
+      );
+      if (external) {
+        clearTimeout(orcidTimer);
+        orcidTimer = setTimeout(() => renderTerminal(), 500);
+      }
+    });
+    orcidObserver.observe(document.body, { childList: true, subtree: true });
   }
 })();

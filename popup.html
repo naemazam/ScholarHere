@@ -75,11 +75,19 @@
       transition: all 0.15s;
     }
     .btn-primary {
-      grid-column: span 2;
       background: #f8fafc;
       color: #090d16;
     }
     .btn-primary:hover { background: #e2e8f0; }
+    .btn-orcid {
+      background: rgba(166, 206, 57, 0.15);
+      color: #a6ce39;
+      border: 1px solid rgba(166, 206, 57, 0.35);
+    }
+    .btn-orcid:hover {
+      background: #a6ce39;
+      color: #090d16;
+    }
     .btn-secondary {
       background: #111827;
       color: #cbd5e1;
@@ -97,16 +105,17 @@
       <img src="SHlogo.png" onerror="this.src='https://raw.githubusercontent.com/naemazam/ScholarHere/main/SHlogo.png'" alt="ScholarHere" class="logo" />
       <div>
         <div class="title">ScholarHere</div>
-        <div class="ver">TERMINAL v4.0</div>
+        <div class="ver">TERMINAL v4.5</div>
       </div>
     </div>
-    <span class="status-pill">ACTIVE</span>
+    <span class="status-pill">GS + ORCID</span>
   </div>
   <p class="desc">
-    Visit any Google Scholar profile to launch the <strong>Metric Evidence Explorer</strong>, <strong>Author Attribution Audit</strong>, and <strong>Lead h-index</strong> engine.
+    Visit any <strong>Google Scholar</strong> or <strong>ORCID</strong> profile to launch the Metric Evidence Explorer, Author Attribution Audit, and Lead h-index engine.
   </p>
   <div class="actions">
-    <a href="https://scholar.google.com" target="_blank" class="btn btn-primary">Launch Google Scholar ↗</a>
+    <a href="https://scholar.google.com" target="_blank" class="btn btn-primary">Google Scholar ↗</a>
+    <a href="https://orcid.org" target="_blank" class="btn btn-orcid">ORCID Registry ↗</a>
     <a href="https://scholarhere.vercel.app/" target="_blank" class="btn btn-secondary">About Us ↗</a>
     <a href="https://github.com/naemazam/ScholarHere" target="_blank" class="btn btn-secondary">GitHub Repo ↗</a>
   </div>

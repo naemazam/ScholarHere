@@ -27,7 +27,12 @@
   font-size: 12.5px;
   line-height: 1.45;
   overflow: hidden;
+  box-sizing: border-box;
   -webkit-font-smoothing: antialiased;
+}
+
+#sh-terminal * {
+  box-sizing: border-box;
 }
 
 #sh-terminal.sh-dark {
@@ -59,8 +64,8 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  text-decoration: none;
-  color: var(--sh-text);
+  text-decoration: none !important;
+  color: var(--sh-text) !important;
 }
 
 .sh-logo {
@@ -92,6 +97,21 @@
   background: var(--sh-primary);
   color: var(--sh-primary-inv);
   letter-spacing: 0.3px;
+}
+
+.sh-badge-orcid {
+  font-family: var(--sh-mono);
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgba(166, 206, 57, 0.18);
+  color: #4d7c0f;
+  border: 1px solid rgba(166, 206, 57, 0.45);
+}
+
+#sh-terminal.sh-dark .sh-badge-orcid {
+  color: #a6ce39;
 }
 
 .sh-status {
@@ -182,12 +202,12 @@
   font-family: var(--sh-sans);
   font-size: 11px;
   font-weight: 600;
-  color: var(--sh-text-secondary);
+  color: var(--sh-text-secondary) !important;
   background: var(--sh-bg-subtle);
   border: 1px solid var(--sh-border-strong);
   padding: 3px 9px;
   border-radius: 4px;
-  text-decoration: none;
+  text-decoration: none !important;
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -196,7 +216,7 @@
 
 .sh-about-btn:hover {
   background: var(--sh-primary);
-  color: var(--sh-primary-inv);
+  color: var(--sh-primary-inv) !important;
   border-color: var(--sh-primary);
 }
 
@@ -460,7 +480,7 @@
 .sh-st-danger { background: rgba(220, 38, 38, 0.12); color: var(--sh-red); border: 1px solid rgba(220, 38, 38, 0.25); }
 .sh-st-info { background: rgba(37, 99, 235, 0.12); color: var(--sh-blue); border: 1px solid rgba(37, 99, 235, 0.25); }
 
-/* Inline Row Annotations inside Google Scholar Table */
+/* Inline Row Annotations inside Google Scholar & ORCID Work Cards */
 .sh-row-meta {
   display: flex;
   align-items: center;
@@ -493,22 +513,22 @@
 .sh-tag-mid   { background: #f8fafc; color: #64748b; border-color: #e2e8f0; }
 .sh-tag-elite { background: #fefce8; color: #a16207; border-color: #fde047; }
 .sh-tag-vel   { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
-.sh-tag-oa    { background: #f0fdf4; color: #15803d; border-color: #bbf7d0; text-decoration: none; }
+.sh-tag-oa    { background: #f0fdf4; color: #15803d; border-color: #bbf7d0; text-decoration: none !important; }
 
 .sh-mini-link {
   font-family: var(--sh-mono);
   font-size: 10px;
-  color: #475569;
+  color: #475569 !important;
   background: #ffffff;
   border: 1px solid #cbd5e1;
   border-radius: 2px;
   padding: 0 5px;
   cursor: pointer;
-  text-decoration: none;
+  text-decoration: none !important;
 }
 
 .sh-mini-link:hover {
-  color: #0f172a;
+  color: #0f172a !important;
   border-color: #0f172a;
 }
 
