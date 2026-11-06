@@ -14,7 +14,7 @@
 
   let activeTab = "overview";
   let evidenceFilter = "ALL_HCORE";
-  let isDarkMode = localStorage.getItem("sh_theme") === "dark";
+  let venueFilter = "ALL";
 
   function getLogoUrl() {
     try {
@@ -30,6 +30,52 @@
     return match ? match[1].toUpperCase() : null;
   }
 
+  // Syncs the user's Google Scholar stats to chrome.storage.local for the Popup window
+  function syncProfileToPopupStorage(stats, forceBind) {
+    if (IS_ORCID || typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) return;
+    const u = new URL(window.location.href);
+    const userParam = u.searchParams.get("user");
+    if (!userParam) return;
+    const cleanUrl = `${u.origin}/citations?user=${encodeURIComponent(userParam)}&hl=en`;
+
+    const statCells = Array.from(document.querySelectorAll("#gsc_rsb_st td.gsc_rsb_std"));
+    const parseNum = (el) => parseInt((el && el.textContent.replace(/,/g, "").trim()) || "0", 10) || 0;
+
+    const citations = statCells.length ? parseNum(statCells[0]) : stats.totalCitations;
+    const citations5y = parseNum(statCells[1]);
+    const hIndex = statCells.length ? parseNum(statCells[2]) : stats.overallH;
+    const hIndex5y = parseNum(statCells[3]);
+    const i10Index = parseNum(statCells[4]);
+
+    chrome.storage.local.get(["sh_user_profile"], (res) => {
+      const existing = res.sh_user_profile;
+      if (!forceBind) {
+        if (!existing || !existing.url || !existing.url.includes(userParam)) return;
+      }
+
+      let previousCitations = citations;
+      if (existing && existing.url && existing.url.includes(userParam) && typeof existing.citations === "number") {
+        previousCitations = existing.citations !== citations
+          ? existing.citations
+          : (existing.previousCitations ?? citations);
+      }
+
+      const snap = {
+        url: cleanUrl,
+        name: stats.identity.fullName,
+        affiliation: stats.identity.affiliation,
+        citations,
+        citations5y,
+        hIndex,
+        hIndex5y,
+        i10Index,
+        previousCitations,
+        updatedAt: Date.now()
+      };
+      chrome.storage.local.set({ sh_user_profile: snap });
+    });
+  }
+
   const STOP_WORDS = new Set([
     "a","an","the","and","or","of","for","in","on","to","with","by","at","from",
     "using","based","via","towards","into","over","under","study","analysis",
@@ -38,34 +84,88 @@
     "network","networks","design","performance","evaluation","detection","paper"
   ]);
 
-  const ELITE_VENUES = [
-    "ieee","acm","usenix","ndss","ccs","neurips","nips","icml","iclr","cvpr",
-    "iccv","eccv","aaai","ijcai","acl","emnlp","naacl","sigcomm","sigmod",
-    "vldb","kdd","www","chi","uist","osdi","sosp","nsdi","infocom","raid",
-    "nature","science","cell","lancet","nejm","pnas","jama","bmj","nar"
-  ];
-  const INDEXED_PUBLISHERS = [
-    "elsevier","springer","wiley","oxford","cambridge","taylor","mdpi",
-    "frontiers","plos","iop","aps","acs","rsc","transactions","journal"
-  ];
+  const PREPRINT_PATTERNS = /\b(arxiv|biorxiv|medrxiv|chemrxiv|ssrn|preprint|techrxiv|research square|hal|corr)\b/i;
 
-  function classifyVenue(venueStr) {
-    const v = (venueStr || "").toLowerCase();
-    if (!v) return { tier: "UNKNOWN", label: null };
-    if (v.includes("arxiv") || v.includes("biorxiv") || v.includes("medrxiv") || v.includes("ssrn") || v.includes("preprint")) {
-      return { tier: "PREPRINT", label: "PREPRINT" };
+  const CONF_PATTERNS = /\b(proceedings|conference|conf\.|symposium|workshop|congress|annual meeting|icml|neurips|nips|iclr|cvpr|iccv|eccv|aaai|ijcai|acl|emnlp|naacl|kdd|sigmod|vldb|sigcomm|infocom|usenix|ndss|ccs|sp|raid|esorics|acsac|globecom|icc|wcnc|pimrc|vtc|icassp|interspeech|chi|uist|cscw|ubicomp|icse|fse|ase|issta|pldi|popl|osdi|sosp|nsdi|eurosys|isca|micro|hpca|dac|iccad|iros|icra|rss|miccai|isbi|cikm|wsdm|sigir|www|recsys)\b/i;
+
+  const ELITE_CONF_PATTERNS = /\b(icml|neurips|nips|iclr|cvpr|iccv|eccv|aaai|ijcai|acl|emnlp|kdd|sigmod|vldb|sigcomm|infocom|usenix|ndss|ccs|chi|icse|fse|ase|pldi|popl|osdi|sosp|nsdi|isca|micro|hpca|icra|iros|miccai|sigir|www)\b/i;
+
+  const Q1_JOURNAL_PATTERNS = /\b(nature|science|cell|lancet|nejm|new england journal|jama|bmj|pnas|ieee transactions|acm transactions|journal of machine learning research|jmlr|artificial intelligence|international journal of computer vision|ijcv|pattern recognition|information fusion|knowledge-based systems|expert systems with applications|applied soft computing|neurocomputing|neural networks|ieee internet of things|ieee communications|ieee journal|ieee network|ieee wireless|ieee security|computers & security|information sciences|future generation computer systems|elsevier|nucleic acids research|advanced materials|acs nano|angewandte|chemical reviews|energy & environmental|renewable and sustainable energy|applied energy|water research|remote sensing of environment|bioinformatics|briefings in bioinformatics|medical image analysis|ieee access)\b/i;
+
+  const Q2_JOURNAL_PATTERNS = /\b(sensors|electronics|applied sciences|remotesensing|remote sensing|mathematics|symmetry|energies|sustainability|molecules|ijms|international journal of molecular|plos one|scientific reports|frontiers in|bmc|peerj|springer|neural computing and applications|multimedia tools and applications|cluster computing|wireless personal communications|soft computing|journal of supercomputing|concurrency and computation|journal of ambient intelligence|journal of network and computer|computer communications|computer networks|pervasive and mobile|journal of systems and software|empirical software engineering|information and software technology|wiley|oxford|cambridge|taylor & francis|iet|ieee sensors|ieee letters|communications of the acm)\b/i;
+
+  const Q3_JOURNAL_PATTERNS = /\b(international journal of|journal of computer|journal of information|journal of electrical|journal of engineering|journal of applied|journal of telecommunications|automatika|iaes|indonesian journal|bulletin of electrical|telkomnika|cmc|computers, materials|intelligent automation|journal of theoretical|worldscientific|world scientific|hindawi|iopscience|aip|ieice|ksii|jece|ijacsa|ijcsns|ijca)\b/i;
+
+  function classifyVenueAndQuartile(venueStr, oaMeta) {
+    const v = (venueStr || "").trim();
+    const vLower = v.toLowerCase();
+
+    if (
+      PREPRINT_PATTERNS.test(vLower) ||
+      (oaMeta && (oaMeta.type === "preprint" || oaMeta.sourceType === "repository"))
+    ) {
+      return {
+        venueType: "PREPRINT",
+        quartile: null,
+        badgeLabel: "PREPRINT",
+        tagClass: "sh-tag-mid"
+      };
     }
-    for (const kw of ELITE_VENUES) {
-      if (new RegExp(`\\b${kw}\\b`, "i").test(v)) {
-        return { tier: "TIER_1", label: "CORE-A* / TOP VENUE" };
+
+    const isConfByOA = oaMeta && (oaMeta.sourceType === "conference" || oaMeta.type === "proceedings-article");
+    if (isConfByOA || CONF_PATTERNS.test(vLower)) {
+      const isCoreA = ELITE_CONF_PATTERNS.test(vLower);
+      return {
+        venueType: "CONFERENCE",
+        quartile: null,
+        confTier: isCoreA ? "CORE A* / A" : "INDEXED CONF",
+        badgeLabel: isCoreA ? "CONF • CORE A*" : "CONFERENCE",
+        tagClass: "sh-tag-conf"
+      };
+    }
+
+    const isJournalByOA = oaMeta && oaMeta.sourceType === "journal";
+    const looksLikeJournal =
+      isJournalByOA ||
+      /\b(journal|transactions|letters|review|reviews|annals|archive|archives|magazine|bulletin|quarterly|medicine|biology|chemistry|physics|computing|informatics|security|engineering|networks|systems|sciences|access|mdpi|elsevier|springer|wiley|ieee|acm|plos|frontiers|nature|lancet|cell)\b/i.test(vLower) ||
+      v.length > 3;
+
+    if (looksLikeJournal) {
+      let q = "Q3";
+      if (oaMeta && typeof oaMeta.impact2yr === "number") {
+        if (oaMeta.impact2yr >= 4.2) q = "Q1";
+        else if (oaMeta.impact2yr >= 2.2) q = "Q2";
+        else if (oaMeta.impact2yr >= 0.9) q = "Q3";
+        else q = "Q4";
+      } else if (Q1_JOURNAL_PATTERNS.test(vLower)) {
+        q = "Q1";
+      } else if (Q2_JOURNAL_PATTERNS.test(vLower)) {
+        q = "Q2";
+      } else if (Q3_JOURNAL_PATTERNS.test(vLower)) {
+        q = "Q3";
+      } else {
+        q = "Q3";
       }
+
+      const tagClass =
+        q === "Q1" ? "sh-tag-q1" :
+        q === "Q2" ? "sh-tag-q2" :
+        q === "Q3" ? "sh-tag-q3" : "sh-tag-q4";
+
+      return {
+        venueType: "JOURNAL",
+        quartile: q,
+        badgeLabel: `JOURNAL • ${q}`,
+        tagClass
+      };
     }
-    for (const kw of INDEXED_PUBLISHERS) {
-      if (v.includes(kw)) {
-        return { tier: "INDEXED", label: "INDEXED JOURNAL" };
-      }
-    }
-    return { tier: "OTHER", label: null };
+
+    return {
+      venueType: "OTHER",
+      quartile: null,
+      badgeLabel: null,
+      tagClass: "sh-tag-mid"
+    };
   }
 
   function getScholarIdentity() {
@@ -80,7 +180,6 @@
       return { fullName, affiliation, lastName, firstInitial, orcid: null };
     }
 
-    // ORCID Profile Identity Extraction
     const orcidId = extractOrcidId();
     const nameEl = document.querySelector("h1.orc-font-heading, .full-name, h1");
     let fullName = nameEl ? nameEl.textContent.trim() : "";
@@ -134,7 +233,9 @@
     const firstAuthorLast = (p.authors[0] || "author").split(/\s+/).pop().replace(/[^a-zA-Z]/g, "").toLowerCase();
     const firstWord = (p.title.split(/\s+/)[0] || "work").replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
     const key = `${firstAuthorLast}${p.year || "nd"}${firstWord}`;
-    return `@article{${key},\n  title={${p.title}},\n  author={${p.authors.join(" and ")}},\n  journal={${p.venue || "Preprint"}},\n  year={${p.year || CURRENT_YEAR}}\n}`;
+    const entryType = p.venueType === "CONFERENCE" ? "inproceedings" : "article";
+    const fieldName = p.venueType === "CONFERENCE" ? "booktitle" : "journal";
+    return `@${entryType}{${key},\n  title={${p.title}},\n  author={${p.authors.join(" and ")}},\n  ${fieldName}={${p.venue || "Preprint"}},\n  year={${p.year || CURRENT_YEAR}}\n}`;
   }
 
   function reconstructAbstract(invertedIndex) {
@@ -146,6 +247,20 @@
       });
     });
     return words.filter(Boolean).join(" ");
+  }
+
+  function extractOpenAlexVenueMeta(work) {
+    const loc = work.primary_location || {};
+    const src = loc.source || {};
+    return {
+      doi: work.doi || null,
+      oaUrl: (work.open_access && work.open_access.oa_url) || null,
+      abstract: reconstructAbstract(work.abstract_inverted_index),
+      type: work.type || "article",
+      sourceType: src.type || null,
+      sourceName: src.display_name || null,
+      fullAuthors: (work.authorships || []).map((a) => a.author && a.author.display_name).filter(Boolean)
+    };
   }
 
   async function inspectSinglePaper(title, tdElement, btn) {
@@ -164,13 +279,7 @@
           const data = await res.json();
           const work = data.results && data.results[0];
           if (work) {
-            openAlexCache[key] = {
-              doi: work.doi || null,
-              oaUrl: (work.open_access && work.open_access.oa_url) || null,
-              abstract: reconstructAbstract(work.abstract_inverted_index),
-              type: work.type || "article",
-              fullAuthors: (work.authorships || []).map((a) => a.author && a.author.display_name).filter(Boolean)
-            };
+            openAlexCache[key] = extractOpenAlexVenueMeta(work);
           }
         }
       } catch (_) {}
@@ -182,7 +291,7 @@
     if (info && (info.abstract || info.doi || info.oaUrl)) {
       drawer.innerHTML = `
         <div style="font-weight:700;margin-bottom:4px;display:flex;justify-content:space-between;">
-          <span>ScholarHere OpenAlex Evidence (${(info.type || "work").toUpperCase()})</span>
+          <span>ScholarHere OpenAlex Evidence (${(info.sourceType || info.type || "work").toUpperCase()})</span>
           <span>
             ${info.doi ? `<a href="${info.doi}" target="_blank" style="color:#2563eb;margin-right:8px;">DOI ↗</a>` : ""}
             ${info.oaUrl ? `<a href="${info.oaUrl}" target="_blank" style="color:#059669;font-weight:700;">Open PDF ↗</a>` : ""}
@@ -197,14 +306,12 @@
     btn.textContent = "Hide";
   }
 
-  // Automatic ORCID Dual-API Sync (OpenAlex ORCID Index + ORCID Public v3.0 Registry)
   async function syncOrcidProfileData(orcidId) {
     if (!orcidId || orcidSyncInProgress) return;
     orcidSyncInProgress = true;
     const recordsMap = new Map();
 
     try {
-      // 1. Query OpenAlex by exact ORCID iD (gives citations, full authorships, exact author_position, venue, OA PDF)
       const oaRes = await fetch(
         `https://api.openalex.org/works?filter=authorships.author.orcid:${orcidId}&per-page=200&sort=cited_by_count:desc`
       );
@@ -217,43 +324,29 @@
           const authorships = w.authorships || [];
           const fullAuthors = authorships.map((a) => (a.author && a.author.display_name) || a.raw_author_name).filter(Boolean);
 
-          // Find exact authorship entry matching this ORCID iD
           const targetIdx = authorships.findIndex((a) => {
             const aOrcid = (a.author && a.author.orcid) || a.raw_orcid || "";
             return aOrcid.toUpperCase().includes(orcidId);
           });
 
-          const venue =
-            (w.primary_location && w.primary_location.source && w.primary_location.source.display_name) ||
-            w.type ||
-            "";
-          const oaUrl = (w.open_access && w.open_access.oa_url) || null;
-          const doi = w.doi || null;
-
-          openAlexCache[normTitle] = {
-            doi,
-            oaUrl,
-            abstract: reconstructAbstract(w.abstract_inverted_index),
-            type: w.type || "article",
-            fullAuthors
-          };
+          const meta = extractOpenAlexVenueMeta(w);
+          openAlexCache[normTitle] = meta;
 
           recordsMap.set(normTitle, {
             title,
             authors: fullAuthors,
             exactPos: targetIdx !== -1 ? targetIdx + 1 : null,
-            venue,
+            venue: meta.sourceName || w.type || "",
             year: w.publication_year || 0,
             citations: w.cited_by_count || 0,
-            doi,
-            oaUrl
+            doi: meta.doi,
+            oaUrl: meta.oaUrl
           });
         });
       }
     } catch (_) {}
 
     try {
-      // 2. Also query ORCID Public API v3.0 /works to catch any unindexed or brand-new works on their ORCID page
       const orcidRes = await fetch(`https://pub.orcid.org/v3.0/${orcidId}/works`, {
         headers: { Accept: "application/json" }
       });
@@ -310,7 +403,6 @@
     renderTerminal();
   }
 
-  // Decorate ORCID Angular work cards on the page and wire them for live filtering
   function annotateOrcidDOMCards(papersByNormTitle) {
     const cards = Array.from(document.querySelectorAll("app-work-stack, app-work"));
     cards.forEach((card) => {
@@ -321,7 +413,8 @@
       if (!p) return;
 
       card.dataset.shRole = p.role;
-      card.dataset.shTier = p.venueTier;
+      card.dataset.shVtype = p.venueType;
+      card.dataset.shQuartile = p.quartile || "NONE";
       card.dataset.shVel = p.velocity >= 8 ? "HIGH" : "NORM";
       card.dataset.shSearch = `${p.title} ${p.authors.join(" ")} ${p.venue}`.toLowerCase();
 
@@ -341,8 +434,9 @@
         `<span class="sh-tag sh-tag-mid">CO-AUTHOR (${posLabel})</span>`;
 
       const citeBadge = `<span class="sh-tag sh-tag-solo">${p.citations} CITES</span>`;
-      const venueInfo = classifyVenue(p.venue);
-      const venueBadge = venueInfo.label ? `<span class="sh-tag sh-tag-elite">${venueInfo.label}</span>` : "";
+      const venueBadge = p.venueBadgeLabel
+        ? `<span class="sh-tag ${p.venueTagClass}">${p.venueBadgeLabel}</span>`
+        : "";
       const velBadge = p.velocity >= 8 ? `<span class="sh-tag sh-tag-vel">${p.velocity.toFixed(1)}/yr</span>` : "";
 
       const oaCached = openAlexCache[title.toLowerCase()];
@@ -392,7 +486,8 @@
     const identity = getScholarIdentity();
 
     let firstCount = 0, lastCount = 0, soloCount = 0, midCount = 0;
-    let tier1Count = 0, preprintCount = 0;
+    let journalCount = 0, conferenceCount = 0, preprintCount = 0;
+    let q1Count = 0, q2Count = 0, q3Count = 0, q4Count = 0;
     let truncatedCount = 0;
     let fractionalCreditSum = 0;
     let totalAuthorCountSum = 0;
@@ -408,7 +503,6 @@
     let minYear = CURRENT_YEAR, maxYear = 1900;
 
     if (IS_ORCID) {
-      // Build source list from ORCID + OpenAlex cache, or fallback to visible ORCID DOM cards while syncing
       let sourceRecords = orcidRecordsCache || [];
       if (sourceRecords.length === 0) {
         const domCards = Array.from(document.querySelectorAll("app-work-stack, app-work"));
@@ -433,9 +527,10 @@
 
       sourceRecords.forEach((rec, idx) => {
         const title = rec.title;
+        const oaCached = openAlexCache[title.toLowerCase()];
         const year = rec.year || 0;
         const citations = rec.citations || 0;
-        const venueRaw = rec.venue || "";
+        const venueRaw = rec.venue || (oaCached && oaCached.sourceName) || "";
         const cleanAuthors = rec.authors && rec.authors.length ? rec.authors : [identity.fullName];
         const authorCount = Math.max(1, cleanAuthors.length);
 
@@ -485,9 +580,18 @@
           coauthorMap[norm].citations += citations;
         });
 
-        const venueInfo = classifyVenue(venueRaw);
-        if (venueInfo.tier === "TIER_1") tier1Count++;
-        if (venueInfo.tier === "PREPRINT") preprintCount++;
+        const vInfo = classifyVenueAndQuartile(venueRaw, oaCached);
+        if (vInfo.venueType === "JOURNAL") {
+          journalCount++;
+          if (vInfo.quartile === "Q1") q1Count++;
+          else if (vInfo.quartile === "Q2") q2Count++;
+          else if (vInfo.quartile === "Q3") q3Count++;
+          else q4Count++;
+        } else if (vInfo.venueType === "CONFERENCE") {
+          conferenceCount++;
+        } else if (vInfo.venueType === "PREPRINT") {
+          preprintCount++;
+        }
 
         totalCitations += citations;
         allCites.push(citations);
@@ -516,7 +620,10 @@
           auditStatus: "VERIFIED",
           fracCredit: Number((fracCredit * 100).toFixed(1)),
           venue: venueRaw,
-          venueTier: venueInfo.tier,
+          venueType: vInfo.venueType,
+          quartile: vInfo.quartile,
+          venueBadgeLabel: vInfo.badgeLabel,
+          venueTagClass: vInfo.tagClass,
           year,
           citations,
           velocity: Number(velocity.toFixed(1)),
@@ -529,7 +636,6 @@
 
       annotateOrcidDOMCards(papersByNormTitle);
     } else {
-      // GOOGLE SCHOLAR DOM ENGINE (Exact v4.0 Logic)
       const rows = Array.from(document.querySelectorAll("#gsc_a_b .gsc_a_tr"));
 
       rows.forEach((row, idx) => {
@@ -543,7 +649,7 @@
         const title = titleEl.textContent.trim();
         const oaCached = openAlexCache[title.toLowerCase()];
         const authorsRaw = grayEls[0] ? grayEls[0].textContent.trim() : "";
-        const venueRaw = grayEls[1] ? grayEls[1].textContent.trim() : "";
+        const venueRaw = (oaCached && oaCached.sourceName) ? oaCached.sourceName : (grayEls[1] ? grayEls[1].textContent.trim() : "");
         const citations = parseInt((citeEl && citeEl.textContent.trim()) || "0", 10) || 0;
         const year = parseInt((yearEl && yearEl.textContent.trim()) || "0", 10) || 0;
 
@@ -611,9 +717,18 @@
           coauthorMap[norm].citations += citations;
         });
 
-        const venueInfo = classifyVenue(venueRaw);
-        if (venueInfo.tier === "TIER_1") tier1Count++;
-        if (venueInfo.tier === "PREPRINT") preprintCount++;
+        const vInfo = classifyVenueAndQuartile(venueRaw, oaCached);
+        if (vInfo.venueType === "JOURNAL") {
+          journalCount++;
+          if (vInfo.quartile === "Q1") q1Count++;
+          else if (vInfo.quartile === "Q2") q2Count++;
+          else if (vInfo.quartile === "Q3") q3Count++;
+          else q4Count++;
+        } else if (vInfo.venueType === "CONFERENCE") {
+          conferenceCount++;
+        } else if (vInfo.venueType === "PREPRINT") {
+          preprintCount++;
+        }
 
         totalCitations += citations;
         allCites.push(citations);
@@ -642,7 +757,10 @@
           auditStatus,
           fracCredit: Number((fracCredit * 100).toFixed(1)),
           venue: venueRaw,
-          venueTier: venueInfo.tier,
+          venueType: vInfo.venueType,
+          quartile: vInfo.quartile,
+          venueBadgeLabel: vInfo.badgeLabel,
+          venueTagClass: vInfo.tagClass,
           year,
           citations,
           velocity: Number(velocity.toFixed(1)),
@@ -651,7 +769,8 @@
         papers.push(paperObj);
 
         row.dataset.shRole = role;
-        row.dataset.shTier = venueInfo.tier;
+        row.dataset.shVtype = vInfo.venueType;
+        row.dataset.shQuartile = vInfo.quartile || "NONE";
         row.dataset.shYear = String(year || 0);
         row.dataset.shVel = velocity >= 10 ? "HIGH" : "NORM";
         row.dataset.shSearch = `${title} ${authorsRaw} ${venueRaw}`.toLowerCase();
@@ -671,8 +790,8 @@
           role === "LAST" ? `<span class="sh-tag sh-tag-last">LAST / PI (${posLabel})</span>` :
           `<span class="sh-tag sh-tag-mid">CO-AUTHOR (${posLabel})</span>`;
 
-        const venueBadge = venueInfo.label
-          ? `<span class="sh-tag sh-tag-elite">${venueInfo.label}</span>`
+        const venueBadge = vInfo.badgeLabel
+          ? `<span class="sh-tag ${vInfo.tagClass}">${vInfo.badgeLabel}</span>`
           : "";
 
         const velBadge = velocity >= 8
@@ -760,8 +879,13 @@
       lastCount,
       soloCount,
       midCount,
-      tier1Count,
+      journalCount,
+      conferenceCount,
       preprintCount,
+      q1Count,
+      q2Count,
+      q3Count,
+      q4Count,
       truncatedCount,
       fractionalCreditTotal: fractionalCreditSum.toFixed(1),
       effectiveCreditPct: Math.round((fractionalCreditSum / total) * 100),
@@ -818,7 +942,7 @@
       return;
     }
     btn.textContent = "Syncing OpenAlex...";
-    const targetPapers = stats.papers.slice(0, 20);
+    const targetPapers = stats.papers.slice(0, 25);
     for (const p of targetPapers) {
       const key = p.title.toLowerCase();
       if (openAlexCache[key] && openAlexCache[key].fullAuthors) continue;
@@ -828,13 +952,7 @@
         const data = await res.json();
         const work = data.results && data.results[0];
         if (work) {
-          openAlexCache[key] = {
-            doi: work.doi || null,
-            oaUrl: (work.open_access && work.open_access.oa_url) || null,
-            abstract: reconstructAbstract(work.abstract_inverted_index),
-            type: work.type || "article",
-            fullAuthors: (work.authorships || []).map((a) => a.author && a.author.display_name).filter(Boolean)
-          };
+          openAlexCache[key] = extractOpenAlexVenueMeta(work);
         }
       } catch (_) {}
     }
@@ -842,17 +960,18 @@
   }
 
   function exportCSV(stats) {
-    const headers = ["Title", "Year", "Role", "Author_Position", "Total_Authors", "Fractional_Share_Pct", "Citations", "Velocity_Per_Yr", "Venue_Tier", "Venue"];
+    const headers = ["Title", "Year", "Venue_Type", "Journal_Quartile", "Role", "Author_Position", "Total_Authors", "Fractional_Share_Pct", "Citations", "Velocity_Per_Yr", "Venue"];
     const rows = stats.papers.map((p) => [
       `"${p.title.replace(/"/g, '""')}"`,
       p.year,
+      p.venueType,
+      p.quartile || (p.venueType === "CONFERENCE" ? "CONF" : "N/A"),
       p.role,
       p.authorPos || "Truncated",
       p.authorCount,
       p.fracCredit,
       p.citations,
       p.velocity,
-      p.venueTier,
       `"${(p.venue || "").replace(/"/g, '""')}"`
     ]);
     const csv = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
@@ -869,7 +988,6 @@
       const gsHost = document.getElementById("gsc_art");
       return gsHost ? { parent: gsHost.parentNode, before: gsHost } : null;
     }
-    // Mount directly above the Works section on ORCID profile pages
     const orcidWorks =
       document.querySelector("app-works, #cy-works, .work-list, main .container") ||
       document.querySelector("main");
@@ -896,6 +1014,9 @@
     const stats = analyzeProfile();
     if (stats.totalPapers === 0 && !IS_ORCID) return;
 
+    // Automatically refresh popup stats if user is viewing their own saved profile
+    syncProfileToPopupStorage(stats, false);
+
     let term = document.getElementById("sh-terminal");
     if (!term) {
       term = document.createElement("div");
@@ -903,14 +1024,17 @@
       mount.parent.insertBefore(term, mount.before);
     }
 
-    if (isDarkMode) term.classList.add("sh-dark");
-    else term.classList.remove("sh-dark");
-
     const total = stats.totalPapers || 1;
     const pFirst = Math.round((stats.firstCount / total) * 100);
     const pLast = Math.round((stats.lastCount / total) * 100);
     const pSolo = Math.round((stats.soloCount / total) * 100);
     const pMid = Math.max(0, 100 - pFirst - pLast - pSolo);
+
+    const jTotal = stats.journalCount || 1;
+    const q1Pct = Math.round((stats.q1Count / jTotal) * 100);
+    const q2Pct = Math.round((stats.q2Count / jTotal) * 100);
+    const q3Pct = Math.round((stats.q3Count / jTotal) * 100);
+    const q4Pct = Math.max(0, 100 - q1Pct - q2Pct - q3Pct);
 
     const years = [];
     for (let y = CURRENT_YEAR - 11; y <= CURRENT_YEAR; y++) years.push(y);
@@ -941,6 +1065,15 @@
       return true;
     }).slice(0, 25);
 
+    const venueFilteredPapers = stats.papers.filter((p) => {
+      if (venueFilter === "Q1") return p.quartile === "Q1";
+      if (venueFilter === "Q2") return p.quartile === "Q2";
+      if (venueFilter === "Q3") return p.quartile === "Q3" || p.quartile === "Q4";
+      if (venueFilter === "JOURNAL") return p.venueType === "JOURNAL";
+      if (venueFilter === "CONFERENCE") return p.venueType === "CONFERENCE";
+      return true;
+    });
+
     term.innerHTML = `
       <div class="sh-topbar">
         <a href="${OFFICIAL_SITE}" target="_blank" class="sh-brand" title="ScholarHere Official Platform">
@@ -948,31 +1081,33 @@
           <div>
             <div class="sh-brand-name">
               ScholarHere
-              <span class="sh-badge-pro">TERMINAL v4.5</span>
+              <span class="sh-badge-pro">TERMINAL v4.9</span>
               ${IS_ORCID ? `<span class="sh-badge-orcid">ORCID iD: ${stats.identity.orcid}</span>` : ""}
             </div>
-            <div class="sh-status">${orcidSyncInProgress ? "SYNCING ORCID + OPENALEX METRICS..." : `N=${stats.totalPapers} PAPERS • SPAN ${stats.minYear}–${CURRENT_YEAR} (${stats.careerYears}Y)`}</div>
+            <div class="sh-status">${orcidSyncInProgress ? "SYNCING ORCID + OPENALEX METRICS..." : `N=${stats.totalPapers} PAPERS • ${stats.journalCount}J (Q1:${stats.q1Count} Q2:${stats.q2Count} Q3:${stats.q3Count}) • ${stats.conferenceCount}C`}</div>
           </div>
         </a>
         <div class="sh-toolbar">
-          <button class="sh-cmd-btn" id="sh-deep-scan" title="Load all works">${IS_ORCID ? "Re-Sync ORCID" : "Deep Scan All"}</button>
-          <button class="sh-cmd-btn" id="sh-enrich-oa" title="Verify DOIs, PDFs & full author lists via OpenAlex">Verify via OpenAlex</button>
-          <button class="sh-cmd-btn" id="sh-pin-compare">${pinned && pinned.identity.fullName === stats.identity.fullName ? "Pinned ✓" : "Pin to Compare"}</button>
-          <button class="sh-cmd-btn" id="sh-theme-toggle" title="Switch Light/Dark Theme">${isDarkMode ? "☀ Light" : "☾ Dark"}</button>
+          <button class="sh-cmd-btn" id="sh-deep-scan" title="Load all works">${IS_ORCID ? "Re-Sync ORCID" : "Deep Scan"}</button>
+          <button class="sh-cmd-btn" id="sh-enrich-oa" title="Verify DOIs, PDFs, Quartiles & full author lists via OpenAlex">Verify OpenAlex</button>
+          ${!IS_ORCID ? `<button class="sh-cmd-btn" id="sh-set-my-profile" title="Save this profile to your Chrome Extension Popup Citation Tracker">Set My Profile</button>` : ""}
+          <button class="sh-cmd-btn" id="sh-pin-compare">${pinned && pinned.identity.fullName === stats.identity.fullName ? "Pinned ✓" : "Pin Compare"}</button>
           <button class="sh-cmd-btn primary" id="sh-export-csv">Export CSV</button>
+          <span class="sh-toolbar-divider"></span>
+          <a href="${OFFICIAL_SITE}" target="_blank" class="sh-about-top-btn" title="Visit ScholarHere Official Site">About Us ↗</a>
         </div>
       </div>
 
       <div class="sh-tabs">
         <div class="sh-tab-list">
           <button class="sh-tab ${activeTab === "overview" ? "active" : ""}" data-tab="overview">Overview</button>
-          <button class="sh-tab ${activeTab === "evidence" ? "active" : ""}" data-tab="evidence">Metric Evidence Explorer</button>
-          <button class="sh-tab ${activeTab === "attribution" ? "active" : ""}" data-tab="attribution">Author Attribution Audit</button>
+          <button class="sh-tab ${activeTab === "venues" ? "active" : ""}" data-tab="venues">Journals &amp; Quartiles (${stats.journalCount}J / ${stats.conferenceCount}C)</button>
+          <button class="sh-tab ${activeTab === "evidence" ? "active" : ""}" data-tab="evidence">Metric Evidence</button>
+          <button class="sh-tab ${activeTab === "attribution" ? "active" : ""}" data-tab="attribution">Attribution Audit</button>
           <button class="sh-tab ${activeTab === "network" ? "active" : ""}" data-tab="network">Co-Authors (${stats.topCoauthors.length})</button>
           <button class="sh-tab ${activeTab === "compare" ? "active" : ""}" data-tab="compare">Compare ${pinned ? `vs. ${pinned.identity.lastName}` : ""}</button>
           <button class="sh-tab ${activeTab === "outreach" ? "active" : ""}" data-tab="outreach">Outreach</button>
         </div>
-        <a href="${OFFICIAL_SITE}" target="_blank" class="sh-about-btn" title="Learn more about ScholarHere">About Us ↗</a>
       </div>
 
       <!-- TAB 1: OVERVIEW -->
@@ -989,9 +1124,14 @@
             <div class="sh-kpi-sub">${stats.overallH ? Math.round((stats.leadH / stats.overallH) * 100) : 0}% h-index retention</div>
           </div>
           <div class="sh-kpi-cell">
-            <div class="sh-kpi-label"><span>FRACTIONAL</span><span>1/N CREDIT</span></div>
-            <div class="sh-kpi-val">${stats.fractionalCreditTotal}</div>
-            <div class="sh-kpi-sub">${stats.effectiveCreditPct}% effective share</div>
+            <div class="sh-kpi-label"><span>JOURNAL QUARTILES</span><span>Q1 / Q2 / Q3</span></div>
+            <div class="sh-kpi-val">${stats.q1Count}<span style="font-size:13px;color:#64748b;font-weight:500;"> / ${stats.q2Count} / ${stats.q3Count}</span></div>
+            <div class="sh-kpi-sub">Q1: ${stats.q1Count} • Q2: ${stats.q2Count} • Q3: ${stats.q3Count}</div>
+          </div>
+          <div class="sh-kpi-cell">
+            <div class="sh-kpi-label"><span>JOURNALS vs CONF</span><span>VENUES</span></div>
+            <div class="sh-kpi-val">${stats.journalCount} <span style="font-size:13px;color:#64748b;font-weight:500;">J / ${stats.conferenceCount} C</span></div>
+            <div class="sh-kpi-sub">${stats.journalCount} Journals • ${stats.conferenceCount} Conf • ${stats.preprintCount} Preprint</div>
           </div>
           <div class="sh-kpi-cell">
             <div class="sh-kpi-label"><span>CITE VELOCITY</span><span>ANNUAL</span></div>
@@ -999,21 +1139,16 @@
             <div class="sh-kpi-sub">cites/yr (${stats.papersPerYear} papers/yr)</div>
           </div>
           <div class="sh-kpi-cell">
-            <div class="sh-kpi-label"><span>TOP VENUES</span><span>A* / ELITE</span></div>
-            <div class="sh-kpi-val">${stats.tier1Count}</div>
-            <div class="sh-kpi-sub">${Math.round((stats.tier1Count / total) * 100)}% top-tier • ${stats.preprintCount} preprints</div>
-          </div>
-          <div class="sh-kpi-cell">
-            <div class="sh-kpi-label"><span>CITE GINI</span><span>CONCENTRATION</span></div>
-            <div class="sh-kpi-val">${stats.gini}</div>
-            <div class="sh-kpi-sub">Top 3 papers = ${stats.paretoTop3Pct}% cites</div>
+            <div class="sh-kpi-label"><span>FRACTIONAL</span><span>1/N CREDIT</span></div>
+            <div class="sh-kpi-val">${stats.fractionalCreditTotal}</div>
+            <div class="sh-kpi-sub">${stats.effectiveCreditPct}% effective share (Gini ${stats.gini})</div>
           </div>
         </div>
 
-        <div class="sh-split">
+        <div class="sh-split-3">
           <div class="sh-box">
             <div class="sh-box-title">
-              <span>Authorship Position Distribution</span>
+              <span>Authorship Position</span>
               <span class="sh-mono-num">N=${stats.totalPapers}</span>
             </div>
             <div class="sh-seg-bar">
@@ -1023,16 +1158,35 @@
               <div class="sh-seg-4" style="width:${pMid}%"></div>
             </div>
             <div class="sh-legend">
-              <div class="sh-legend-item"><span><i class="sh-dot sh-seg-1"></i>First Author</span><span class="sh-mono-num">${stats.firstCount} (${pFirst}%)</span></div>
+              <div class="sh-legend-item"><span><i class="sh-dot sh-seg-1"></i>1st Author</span><span class="sh-mono-num">${stats.firstCount} (${pFirst}%)</span></div>
               <div class="sh-legend-item"><span><i class="sh-dot sh-seg-2"></i>Last / PI</span><span class="sh-mono-num">${stats.lastCount} (${pLast}%)</span></div>
               <div class="sh-legend-item"><span><i class="sh-dot sh-seg-3"></i>Solo Author</span><span class="sh-mono-num">${stats.soloCount} (${pSolo}%)</span></div>
-              <div class="sh-legend-item"><span><i class="sh-dot sh-seg-4"></i>Middle Co-Author</span><span class="sh-mono-num">${stats.midCount} (${pMid}%)</span></div>
+              <div class="sh-legend-item"><span><i class="sh-dot sh-seg-4"></i>Co-Author</span><span class="sh-mono-num">${stats.midCount} (${pMid}%)</span></div>
             </div>
           </div>
 
           <div class="sh-box">
             <div class="sh-box-title">
-              <span>12-Year Publication Rhythm (${CURRENT_YEAR - 11}–${CURRENT_YEAR})</span>
+              <span>Journal Quartiles &amp; Venue Mix</span>
+              <span class="sh-mono-num">${stats.journalCount}J • ${stats.conferenceCount}C</span>
+            </div>
+            <div class="sh-seg-bar">
+              <div class="sh-seg-1" style="width:${q1Pct}%"></div>
+              <div class="sh-seg-3" style="width:${q2Pct}%"></div>
+              <div class="sh-seg-amber" style="width:${q3Pct}%"></div>
+              <div class="sh-seg-4" style="width:${q4Pct}%"></div>
+            </div>
+            <div class="sh-legend">
+              <div class="sh-legend-item"><span><i class="sh-dot sh-seg-1"></i>Q1 Journals</span><span class="sh-mono-num">${stats.q1Count} (${q1Pct}%)</span></div>
+              <div class="sh-legend-item"><span><i class="sh-dot sh-seg-3"></i>Q2 Journals</span><span class="sh-mono-num">${stats.q2Count} (${q2Pct}%)</span></div>
+              <div class="sh-legend-item"><span><i class="sh-dot sh-seg-amber"></i>Q3 Journals</span><span class="sh-mono-num">${stats.q3Count} (${q3Pct}%)</span></div>
+              <div class="sh-legend-item"><span><i class="sh-dot sh-seg-2"></i>Conferences</span><span class="sh-mono-num">${stats.conferenceCount} total</span></div>
+            </div>
+          </div>
+
+          <div class="sh-box">
+            <div class="sh-box-title">
+              <span>12-Year Rhythm (${CURRENT_YEAR - 11}–${CURRENT_YEAR})</span>
               <span class="sh-mono-num">PEAK ${maxYrCount}/YR</span>
             </div>
             <div class="sh-sparkline">${sparkHTML}</div>
@@ -1044,14 +1198,108 @@
             <button class="sh-filter-pill active" data-f="ALL">ALL (${stats.totalPapers})</button>
             <button class="sh-filter-pill" data-f="FIRST">1ST / SOLO (${stats.firstCount + stats.soloCount})</button>
             <button class="sh-filter-pill" data-f="LAST">LAST / PI (${stats.lastCount})</button>
-            <button class="sh-filter-pill" data-f="TIER_1">TOP VENUE (${stats.tier1Count})</button>
-            <button class="sh-filter-pill" data-f="HIGH_VEL">HIGH VELOCITY</button>
+            <button class="sh-filter-pill" data-f="Q1">Q1 JOURNALS (${stats.q1Count})</button>
+            <button class="sh-filter-pill" data-f="Q2_Q3">Q2 &amp; Q3 (${stats.q2Count + stats.q3Count})</button>
+            <button class="sh-filter-pill" data-f="JOURNAL">ALL JOURNALS (${stats.journalCount})</button>
+            <button class="sh-filter-pill" data-f="CONF">CONFERENCES (${stats.conferenceCount})</button>
           </div>
-          <input type="text" class="sh-search-input" id="sh-live-search" placeholder="Filter table by keyword, co-author, venue..." />
+          <input type="text" class="sh-search-input" id="sh-live-search" placeholder="Filter by keyword, venue, author..." />
         </div>
       </div>
 
-      <!-- TAB 2: METRIC EVIDENCE EXPLORER -->
+      <!-- TAB 2: JOURNALS & CONFERENCES (Q1, Q2, Q3 AUDIT) -->
+      <div class="sh-panel ${activeTab === "venues" ? "active" : ""}" data-panel="venues">
+        <div class="sh-kpi-grid" style="grid-template-columns: repeat(6, 1fr); margin-bottom: 12px;">
+          <div class="sh-kpi-cell">
+            <div class="sh-kpi-label"><span>TOTAL JOURNALS</span><span>INDEXED</span></div>
+            <div class="sh-kpi-val">${stats.journalCount}</div>
+            <div class="sh-kpi-sub">${Math.round((stats.journalCount / total) * 100)}% of total output</div>
+          </div>
+          <div class="sh-kpi-cell">
+            <div class="sh-kpi-label"><span>Q1 JOURNALS</span><span>TOP 25%</span></div>
+            <div class="sh-kpi-val" style="color:var(--sh-green);">${stats.q1Count}</div>
+            <div class="sh-kpi-sub">${q1Pct}% of journal papers</div>
+          </div>
+          <div class="sh-kpi-cell">
+            <div class="sh-kpi-label"><span>Q2 JOURNALS</span><span>25%–50%</span></div>
+            <div class="sh-kpi-val" style="color:var(--sh-blue);">${stats.q2Count}</div>
+            <div class="sh-kpi-sub">${q2Pct}% of journal papers</div>
+          </div>
+          <div class="sh-kpi-cell">
+            <div class="sh-kpi-label"><span>Q3 JOURNALS</span><span>50%–75%</span></div>
+            <div class="sh-kpi-val" style="color:var(--sh-amber);">${stats.q3Count}</div>
+            <div class="sh-kpi-sub">${q3Pct}% of journal papers</div>
+          </div>
+          <div class="sh-kpi-cell">
+            <div class="sh-kpi-label"><span>CONFERENCES</span><span>PROCEEDINGS</span></div>
+            <div class="sh-kpi-val" style="color:var(--sh-purple);">${stats.conferenceCount}</div>
+            <div class="sh-kpi-sub">${Math.round((stats.conferenceCount / total) * 100)}% conference papers</div>
+          </div>
+          <div class="sh-kpi-cell">
+            <div class="sh-kpi-label"><span>PREPRINTS</span><span>ARXIV / SSRN</span></div>
+            <div class="sh-kpi-val">${stats.preprintCount}</div>
+            <div class="sh-kpi-sub">Working papers / preprints</div>
+          </div>
+        </div>
+
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
+          <span style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--sh-text-secondary);">Journal Quartile (Q1–Q3) &amp; Conference Classification Ledger</span>
+          <div class="sh-pill-group">
+            <button class="sh-filter-pill ${venueFilter === "ALL" ? "active" : ""}" data-vf="ALL">All (${stats.totalPapers})</button>
+            <button class="sh-filter-pill ${venueFilter === "Q1" ? "active" : ""}" data-vf="Q1">Q1 Journals (${stats.q1Count})</button>
+            <button class="sh-filter-pill ${venueFilter === "Q2" ? "active" : ""}" data-vf="Q2">Q2 Journals (${stats.q2Count})</button>
+            <button class="sh-filter-pill ${venueFilter === "Q3" ? "active" : ""}" data-vf="Q3">Q3 Journals (${stats.q3Count})</button>
+            <button class="sh-filter-pill ${venueFilter === "JOURNAL" ? "active" : ""}" data-vf="JOURNAL">All Journals (${stats.journalCount})</button>
+            <button class="sh-filter-pill ${venueFilter === "CONFERENCE" ? "active" : ""}" data-vf="CONFERENCE">Conferences (${stats.conferenceCount})</button>
+          </div>
+        </div>
+
+        <div class="sh-table-wrap">
+          <table class="sh-data-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Publication Title</th>
+                <th>Publication Venue / Journal / Conference</th>
+                <th>Venue Type</th>
+                <th>Quartile / Tier</th>
+                <th>Role</th>
+                <th>Citations</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${venueFilteredPapers.map((p, idx) => {
+                const typeBadge =
+                  p.venueType === "JOURNAL" ? `<span class="sh-status-tag sh-st-info">JOURNAL</span>` :
+                  p.venueType === "CONFERENCE" ? `<span class="sh-status-tag sh-st-purple">CONFERENCE</span>` :
+                  p.venueType === "PREPRINT" ? `<span class="sh-status-tag sh-st-warn">PREPRINT</span>` :
+                  `<span class="sh-status-tag">OTHER</span>`;
+
+                const qBadge =
+                  p.quartile === "Q1" ? `<span class="sh-status-tag sh-st-ok">Q1 JOURNAL</span>` :
+                  p.quartile === "Q2" ? `<span class="sh-status-tag sh-st-info">Q2 JOURNAL</span>` :
+                  p.quartile === "Q3" ? `<span class="sh-status-tag sh-st-warn">Q3 JOURNAL</span>` :
+                  p.venueType === "CONFERENCE" ? `<span class="sh-status-tag sh-st-purple">${p.venueBadgeLabel || "CONF"}</span>` :
+                  `<span class="sh-status-tag">—</span>`;
+
+                return `
+                  <tr>
+                    <td class="sh-mono-num">${idx + 1}</td>
+                    <td style="font-weight:600;max-width:290px;">${p.title}</td>
+                    <td style="max-width:230px;color:var(--sh-text-secondary);">${p.venue || "—"}</td>
+                    <td>${typeBadge}</td>
+                    <td>${qBadge}</td>
+                    <td class="sh-mono-num">${p.role}</td>
+                    <td class="sh-mono-num" style="font-weight:700;">${p.citations}</td>
+                  </tr>
+                `;
+              }).join("")}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- TAB 3: METRIC EVIDENCE EXPLORER -->
       <div class="sh-panel ${activeTab === "evidence" ? "active" : ""}" data-panel="evidence">
         <div class="sh-kpi-grid" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 12px;">
           <div class="sh-kpi-cell">
@@ -1077,9 +1325,9 @@
         </div>
 
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-          <span style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--sh-text-secondary);">Citation Rank & h-Core Proof Ledger</span>
+          <span style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--sh-text-secondary);">Citation Rank &amp; h-Core Proof Ledger</span>
           <div class="sh-pill-group">
-            <button class="sh-filter-pill ${evidenceFilter === "ALL_HCORE" ? "active" : ""}" data-ev="ALL_HCORE">h-Core & Threshold (Top ${stats.overallH + 3})</button>
+            <button class="sh-filter-pill ${evidenceFilter === "ALL_HCORE" ? "active" : ""}" data-ev="ALL_HCORE">h-Core &amp; Threshold (Top ${stats.overallH + 3})</button>
             <button class="sh-filter-pill ${evidenceFilter === "LEAD_CORE" ? "active" : ""}" data-ev="LEAD_CORE">Lead-Author Evidence Only</button>
             <button class="sh-filter-pill ${evidenceFilter === "HIGH_VEL" ? "active" : ""}" data-ev="HIGH_VEL">Fastest Velocity (≥8/yr)</button>
           </div>
@@ -1091,10 +1339,10 @@
               <tr>
                 <th>Cite Rank</th>
                 <th>Publication Title</th>
+                <th>Venue / Quartile</th>
                 <th>Role</th>
                 <th>Year</th>
                 <th>Citations</th>
-                <th>Velocity</th>
                 <th>h-Core Proof Status</th>
               </tr>
             </thead>
@@ -1109,11 +1357,11 @@
                 return `
                   <tr>
                     <td class="sh-mono-num">#${rank}</td>
-                    <td style="font-weight:600;max-width:340px;">${p.title}</td>
+                    <td style="font-weight:600;max-width:310px;">${p.title}</td>
+                    <td><span class="sh-status-tag sh-st-info">${p.venueBadgeLabel || p.venueType}</span></td>
                     <td><span class="sh-status-tag ${p.role === "MID" ? "sh-st-info" : "sh-st-ok"}">${p.role}</span></td>
                     <td class="sh-mono-num">${p.year || "—"}</td>
                     <td class="sh-mono-num" style="font-weight:700;">${p.citations}</td>
-                    <td class="sh-mono-num">${p.velocity}/yr</td>
                     <td>${badge}</td>
                   </tr>
                 `;
@@ -1123,7 +1371,7 @@
         </div>
       </div>
 
-      <!-- TAB 3: AUTHOR ATTRIBUTION AUDIT -->
+      <!-- TAB 4: AUTHOR ATTRIBUTION AUDIT -->
       <div class="sh-panel ${activeTab === "attribution" ? "active" : ""}" data-panel="attribution">
         <div class="sh-kpi-grid" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 12px;">
           <div class="sh-kpi-cell">
@@ -1139,7 +1387,7 @@
           <div class="sh-kpi-cell">
             <div class="sh-kpi-label"><span>TRUNCATED BY "..."</span><span>AMBIGUOUS</span></div>
             <div class="sh-kpi-val">${stats.truncatedCount}</div>
-            <div class="sh-kpi-sub">${stats.truncatedCount > 0 ? "Click Verify via OpenAlex to resolve" : "100% full author lists verified"}</div>
+            <div class="sh-kpi-sub">${stats.truncatedCount > 0 ? "Click Verify OpenAlex to resolve" : "100% full author lists verified"}</div>
           </div>
           <div class="sh-kpi-cell">
             <div class="sh-kpi-label"><span>PRIMARY EXECUTION</span><span>1ST + SOLO</span></div>
@@ -1149,7 +1397,7 @@
         </div>
 
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-          <span style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--sh-text-secondary);">Per-Paper Authorship & Credit Attribution Ledger</span>
+          <span style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--sh-text-secondary);">Per-Paper Authorship &amp; Credit Attribution Ledger</span>
           <button class="sh-cmd-btn" id="sh-audit-resolve">Resolve Truncated "..." Lists via OpenAlex</button>
         </div>
 
@@ -1193,7 +1441,7 @@
         </div>
       </div>
 
-      <!-- TAB 4: CO-AUTHOR MATRIX -->
+      <!-- TAB 5: CO-AUTHOR MATRIX -->
       <div class="sh-panel ${activeTab === "network" ? "active" : ""}" data-panel="network">
         <div class="sh-table-wrap">
           <table class="sh-data-table">
@@ -1221,11 +1469,11 @@
         </div>
       </div>
 
-      <!-- TAB 5: COMPARE -->
+      <!-- TAB 6: COMPARE -->
       <div class="sh-panel ${activeTab === "compare" ? "active" : ""}" data-panel="compare">
         ${!pinned ? `
           <div style="padding:14px;color:var(--sh-text-secondary);">
-            Click <strong>"Pin to Compare"</strong> in the top toolbar on any Google Scholar or ORCID profile, then open a second scholar's profile to benchmark them side-by-side.
+            Click <strong>"Pin Compare"</strong> in the top toolbar on any Google Scholar or ORCID profile, then open a second scholar's profile to benchmark them side-by-side.
           </div>
         ` : `
           <table class="sh-data-table">
@@ -1251,10 +1499,16 @@
                 <td class="sh-mono-num">${stats.leadH - pinned.leadH >= 0 ? "+" : ""}${stats.leadH - pinned.leadH}</td>
               </tr>
               <tr>
-                <td>Fractional Paper Credit (1/N)</td>
-                <td class="sh-mono-num">${stats.fractionalCreditTotal}</td>
-                <td class="sh-mono-num">${pinned.fractionalCreditTotal || "—"}</td>
-                <td class="sh-mono-num">${pinned.fractionalCreditTotal ? (stats.fractionalCreditTotal - pinned.fractionalCreditTotal).toFixed(1) : "—"}</td>
+                <td>Q1 / Q2 / Q3 Journals</td>
+                <td class="sh-mono-num">${stats.q1Count} / ${stats.q2Count} / ${stats.q3Count}</td>
+                <td class="sh-mono-num">${pinned.q1Count || 0} / ${pinned.q2Count || 0} / ${pinned.q3Count || 0}</td>
+                <td class="sh-mono-num">${stats.q1Count - (pinned.q1Count || 0) >= 0 ? "+" : ""}${stats.q1Count - (pinned.q1Count || 0)} Q1</td>
+              </tr>
+              <tr>
+                <td>Total Journals vs. Conferences</td>
+                <td class="sh-mono-num">${stats.journalCount} J / ${stats.conferenceCount} C</td>
+                <td class="sh-mono-num">${pinned.journalCount || 0} J / ${pinned.conferenceCount || 0} C</td>
+                <td class="sh-mono-num">${stats.journalCount - (pinned.journalCount || 0) >= 0 ? "+" : ""}${stats.journalCount - (pinned.journalCount || 0)} J</td>
               </tr>
               <tr>
                 <td>Citation Velocity (Citations / Yr)</td>
@@ -1262,21 +1516,15 @@
                 <td class="sh-mono-num">${pinned.citesPerYear}</td>
                 <td class="sh-mono-num">${stats.citesPerYear - pinned.citesPerYear >= 0 ? "+" : ""}${stats.citesPerYear - pinned.citesPerYear}</td>
               </tr>
-              <tr>
-                <td>Top-Tier Venue Count</td>
-                <td class="sh-mono-num">${stats.tier1Count}</td>
-                <td class="sh-mono-num">${pinned.tier1Count}</td>
-                <td class="sh-mono-num">${stats.tier1Count - pinned.tier1Count >= 0 ? "+" : ""}${stats.tier1Count - pinned.tier1Count}</td>
-              </tr>
             </tbody>
           </table>
         `}
       </div>
 
-      <!-- TAB 6: OUTREACH & REPORT -->
+      <!-- TAB 7: OUTREACH & REPORT -->
       <div class="sh-panel ${activeTab === "outreach" ? "active" : ""}" data-panel="outreach">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-          <span style="font-size:11.5px;color:var(--sh-text-secondary);font-weight:600;">Academic Inquiry & Audit Summary Generator</span>
+          <span style="font-size:11.5px;color:var(--sh-text-secondary);font-weight:600;">Academic Inquiry &amp; Audit Summary Generator</span>
           <div style="display:flex;gap:6px;">
             <button class="sh-cmd-btn" id="sh-switch-summary">Generate Audit Summary</button>
             <button class="sh-cmd-btn primary" id="sh-copy-email">Copy Text</button>
@@ -1311,9 +1559,26 @@ Best regards,
       };
     });
 
+    // Bind Venue & Quartile Tab Filter Pills
+    term.querySelectorAll("[data-vf]").forEach((btn) => {
+      btn.onclick = () => {
+        venueFilter = btn.dataset.vf;
+        renderTerminal();
+      };
+    });
+
     // Bind Toolbar Actions
     term.querySelector("#sh-deep-scan").onclick = (e) => triggerDeepScan(e.target);
     term.querySelector("#sh-enrich-oa").onclick = (e) => enrichWithOpenAlex(stats, e.target);
+
+    const setMyProfileBtn = term.querySelector("#sh-set-my-profile");
+    if (setMyProfileBtn) {
+      setMyProfileBtn.onclick = (e) => {
+        syncProfileToPopupStorage(stats, true);
+        e.target.textContent = "Profile Saved ✓";
+      };
+    }
+
     const resolveBtn = term.querySelector("#sh-audit-resolve");
     if (resolveBtn) {
       resolveBtn.onclick = (e) => enrichWithOpenAlex(stats, e.target);
@@ -1322,11 +1587,6 @@ Best regards,
     term.querySelector("#sh-pin-compare").onclick = (e) => {
       localStorage.setItem("sh_pinned_scholar", JSON.stringify(stats));
       e.target.textContent = "Pinned ✓";
-    };
-    term.querySelector("#sh-theme-toggle").onclick = () => {
-      isDarkMode = !isDarkMode;
-      localStorage.setItem("sh_theme", isDarkMode ? "dark" : "light");
-      renderTerminal();
     };
 
     const switchSummaryBtn = term.querySelector("#sh-switch-summary");
@@ -1338,9 +1598,10 @@ Best regards,
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 • Leadership Ratio: ${stats.leadRatio}% (${stats.firstCount + stats.soloCount} 1st/Solo | ${stats.lastCount} Last/PI)
 • Lead-Only h-index: ${stats.leadH} (Overall h-index: ${stats.overallH} | Lead Cite Share: ${stats.leadCiteSharePct}%)
+• Venue Breakdown: ${stats.journalCount} Journals | ${stats.conferenceCount} Conferences | ${stats.preprintCount} Preprints
+• Journal Quartiles: Q1: ${stats.q1Count} | Q2: ${stats.q2Count} | Q3: ${stats.q3Count}
 • Fractional Paper Credit (1/N): ${stats.fractionalCreditTotal} (${stats.effectiveCreditPct}% effective share)
 • Annual Velocity: ${stats.citesPerYear} citations/yr (${stats.papersPerYear} papers/yr)
-• Top-Tier Venues: ${stats.tier1Count} papers | Citation Gini: ${stats.gini}
 • Core Domains: ${stats.topKeywords.map((k) => "#" + k.word).join(" ")}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Audited via ScholarHere Terminal`;
@@ -1357,7 +1618,7 @@ Audited via ScholarHere Terminal`;
       };
     }
 
-    // Bind Live Table Filters on Overview Tab (Works on Google Scholar rows & ORCID work cards)
+    // Bind Live Table Filters on Overview Tab
     const applyRowFilter = (mode, query) => {
       const q = (query || "").toLowerCase().trim();
       const selector = IS_ORCID ? "app-work-stack[data-sh-role], app-work[data-sh-role]" : "#gsc_a_b .gsc_a_tr";
@@ -1365,8 +1626,10 @@ Audited via ScholarHere Terminal`;
         let matchMode = true;
         if (mode === "FIRST") matchMode = row.dataset.shRole === "FIRST" || row.dataset.shRole === "SOLO";
         else if (mode === "LAST") matchMode = row.dataset.shRole === "LAST";
-        else if (mode === "TIER_1") matchMode = row.dataset.shTier === "TIER_1";
-        else if (mode === "HIGH_VEL") matchMode = row.dataset.shVel === "HIGH";
+        else if (mode === "Q1") matchMode = row.dataset.shQuartile === "Q1";
+        else if (mode === "Q2_Q3") matchMode = row.dataset.shQuartile === "Q2" || row.dataset.shQuartile === "Q3";
+        else if (mode === "JOURNAL") matchMode = row.dataset.shVtype === "JOURNAL";
+        else if (mode === "CONF") matchMode = row.dataset.shVtype === "CONFERENCE";
 
         const matchQuery = !q || (row.dataset.shSearch && row.dataset.shSearch.includes(q));
         row.style.display = matchMode && matchQuery ? "" : "none";
@@ -1402,7 +1665,6 @@ Audited via ScholarHere Terminal`;
       observer.observe(tbody, { childList: true });
     }
   } else {
-    // Watch ORCID Angular app so the terminal mounts right as `app-works` finishes rendering
     let orcidTimer = null;
     const orcidObserver = new MutationObserver((mutations) => {
       const external = mutations.some(

@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "ScholarHere — Research Intelligence for Google Scholar & ORCID",
   "short_name": "ScholarHere",
-  "version": "4.5.0",
-  "description": "Precision bibliometric terminal for Google Scholar & ORCID: Metric Evidence Explorer, Author Attribution Audit, Lead h-index, and OpenAlex verification.",
+  "version": "4.9.0",
+  "description": "Precision bibliometric terminal for Google Scholar & ORCID: Q1–Q3 Journal Audit, Metric Evidence, Attribution Audit, and Live Citation Popup.",
   "homepage_url": "https://scholarhere.vercel.app/",
   "icons": {
     "16": "SHlogo.png",
@@ -24,7 +24,13 @@
   "permissions": ["storage"],
   "host_permissions": [
     "https://api.openalex.org/*",
-    "https://pub.orcid.org/*"
+    "https://pub.orcid.org/*",
+    "https://scholar.google.com/*",
+    "https://scholar.google.co.uk/*",
+    "https://scholar.google.ca/*",
+    "https://scholar.google.com.au/*",
+    "https://scholar.google.co.in/*",
+    "https://scholar.google.com.bd/*"
   ],
   "web_accessible_resources": [
     {

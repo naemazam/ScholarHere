@@ -14,6 +14,7 @@
   --sh-purple: #7c3aed;
   --sh-amber: #d97706;
   --sh-red: #dc2626;
+  --sh-teal: #0d9488;
   --sh-mono: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
   --sh-sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
 
@@ -48,7 +49,7 @@
   --sh-primary-inv: #090d16;
 }
 
-/* Header Bar */
+/* Header Bar (Top-Left Brand + Top-Right Action Corner) */
 .sh-topbar {
   display: flex;
   justify-content: space-between;
@@ -56,7 +57,7 @@
   padding: 10px 16px;
   background: var(--sh-bg-subtle);
   border-bottom: 1px solid var(--sh-border);
-  gap: 12px;
+  gap: 10px;
   flex-wrap: wrap;
 }
 
@@ -116,7 +117,7 @@
 
 .sh-status {
   font-family: var(--sh-mono);
-  font-size: 10.5px;
+  font-size: 10px;
   color: var(--sh-text-muted);
 }
 
@@ -129,19 +130,20 @@
 
 .sh-cmd-btn {
   font-family: var(--sh-sans);
-  font-size: 11.5px;
+  font-size: 11px;
   font-weight: 500;
   color: var(--sh-text);
   background: var(--sh-bg);
   border: 1px solid var(--sh-border-strong);
   border-radius: 5px;
-  padding: 4px 10px;
+  padding: 4px 9px;
   cursor: pointer;
-  text-decoration: none;
+  text-decoration: none !important;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   transition: all 0.12s ease;
+  white-space: nowrap;
 }
 
 .sh-cmd-btn:hover {
@@ -150,7 +152,7 @@
 
 .sh-cmd-btn.primary {
   background: var(--sh-primary);
-  color: var(--sh-primary-inv);
+  color: var(--sh-primary-inv) !important;
   border-color: var(--sh-primary);
 }
 
@@ -158,22 +160,51 @@
   opacity: 0.9;
 }
 
-/* Navigation Bar & About Us Button */
+/* Top-Right Corner "About Us ↗" Button + Divider */
+.sh-toolbar-divider {
+  width: 1px;
+  height: 16px;
+  background: var(--sh-border-strong);
+  margin: 0 2px;
+}
+
+.sh-about-top-btn {
+  font-family: var(--sh-sans);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--sh-blue) !important;
+  background: rgba(37, 99, 235, 0.06);
+  border: 1px solid rgba(37, 99, 235, 0.28);
+  padding: 4px 9px;
+  border-radius: 5px;
+  text-decoration: none !important;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.12s ease;
+  white-space: nowrap;
+}
+
+.sh-about-top-btn:hover {
+  background: var(--sh-blue);
+  color: #ffffff !important;
+  border-color: var(--sh-blue);
+}
+
+/* Full-Width Uncrowded Navigation Bar */
 .sh-tabs {
   display: flex;
-  justify-content: space-between;
   align-items: center;
   border-bottom: 1px solid var(--sh-border);
   background: var(--sh-bg);
   padding: 0 16px;
-  gap: 12px;
-  flex-wrap: wrap;
+  overflow-x: auto;
 }
 
 .sh-tab-list {
   display: flex;
-  gap: 16px;
-  overflow-x: auto;
+  gap: 18px;
+  width: 100%;
 }
 
 .sh-tab {
@@ -196,28 +227,6 @@
 .sh-tab.active {
   color: var(--sh-text);
   border-bottom-color: var(--sh-primary);
-}
-
-.sh-about-btn {
-  font-family: var(--sh-sans);
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--sh-text-secondary) !important;
-  background: var(--sh-bg-subtle);
-  border: 1px solid var(--sh-border-strong);
-  padding: 3px 9px;
-  border-radius: 4px;
-  text-decoration: none !important;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  transition: all 0.12s ease;
-}
-
-.sh-about-btn:hover {
-  background: var(--sh-primary);
-  color: var(--sh-primary-inv) !important;
-  border-color: var(--sh-primary);
 }
 
 /* Panels */
@@ -278,16 +287,16 @@
   margin-top: 3px;
 }
 
-/* Split Analytical Boxes */
-.sh-split {
+/* 3-Column Analytical Grid on Overview */
+.sh-split-3 {
   display: grid;
-  grid-template-columns: 1.1fr 1fr;
-  gap: 16px;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
   margin-bottom: 16px;
 }
 
-@media (max-width: 800px) {
-  .sh-split { grid-template-columns: 1fr; }
+@media (max-width: 920px) {
+  .sh-split-3 { grid-template-columns: 1fr; }
 }
 
 .sh-box {
@@ -322,12 +331,13 @@
 .sh-seg-2 { background: var(--sh-purple); }
 .sh-seg-3 { background: var(--sh-blue); }
 .sh-seg-4 { background: #94a3b8; }
+.sh-seg-amber { background: var(--sh-amber); }
 
 .sh-legend {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 6px;
-  font-size: 11.5px;
+  gap: 5px;
+  font-size: 11px;
 }
 
 .sh-legend-item {
@@ -335,7 +345,7 @@
   align-items: center;
   justify-content: space-between;
   color: var(--sh-text-secondary);
-  padding: 2px 4px;
+  padding: 2px 3px;
 }
 
 .sh-dot {
@@ -343,7 +353,7 @@
   width: 7px;
   height: 7px;
   border-radius: 1px;
-  margin-right: 6px;
+  margin-right: 5px;
 }
 
 /* 12-Year Sparkline */
@@ -423,7 +433,7 @@
   color: var(--sh-text);
   border: 1px solid var(--sh-border-strong);
   border-radius: 4px;
-  width: 210px;
+  width: 200px;
 }
 
 /* Data Tables & Scroll Containers */
@@ -464,7 +474,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Status Pills inside Evidence & Attribution Tables */
+/* Status Pills inside Evidence, Venue & Attribution Tables */
 .sh-status-tag {
   font-family: var(--sh-mono);
   font-size: 9.5px;
@@ -479,6 +489,7 @@
 .sh-st-warn { background: rgba(217, 119, 6, 0.12); color: var(--sh-amber); border: 1px solid rgba(217, 119, 6, 0.25); }
 .sh-st-danger { background: rgba(220, 38, 38, 0.12); color: var(--sh-red); border: 1px solid rgba(220, 38, 38, 0.25); }
 .sh-st-info { background: rgba(37, 99, 235, 0.12); color: var(--sh-blue); border: 1px solid rgba(37, 99, 235, 0.25); }
+.sh-st-purple { background: rgba(124, 58, 237, 0.12); color: var(--sh-purple); border: 1px solid rgba(124, 58, 237, 0.25); }
 
 /* Inline Row Annotations inside Google Scholar & ORCID Work Cards */
 .sh-row-meta {
@@ -511,7 +522,13 @@
 .sh-tag-last  { background: #f5f3ff; color: #6d28d9; border-color: #ddd6fe; }
 .sh-tag-solo  { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
 .sh-tag-mid   { background: #f8fafc; color: #64748b; border-color: #e2e8f0; }
-.sh-tag-elite { background: #fefce8; color: #a16207; border-color: #fde047; }
+
+/* Quartile & Venue Inline Tags */
+.sh-tag-q1    { background: #dcfce7; color: #166534; border-color: #86efac; }
+.sh-tag-q2    { background: #dbeafe; color: #1e40af; border-color: #93c5fd; }
+.sh-tag-q3    { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+.sh-tag-q4    { background: #f1f5f9; color: #475569; border-color: #cbd5e1; }
+.sh-tag-conf  { background: #f3e8ff; color: #6b21a8; border-color: #d8b4fe; }
 .sh-tag-vel   { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
 .sh-tag-oa    { background: #f0fdf4; color: #15803d; border-color: #bbf7d0; text-decoration: none !important; }
 

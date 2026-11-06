@@ -5,18 +5,19 @@
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      width: 300px;
-      font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
-      background: #090d16;
-      color: #f8fafc;
+      width: 330px;
+      font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+      background: #ffffff;
+      color: #0f172a;
       padding: 16px;
+      -webkit-font-smoothing: antialiased;
     }
     .header {
       display: flex;
       align-items: center;
       justify-content: space-between;
       padding-bottom: 12px;
-      border-bottom: 1px solid #1e293b;
+      border-bottom: 1px solid #e2e8f0;
       margin-bottom: 12px;
     }
     .brand {
@@ -30,34 +31,195 @@
       border-radius: 6px;
       object-fit: contain;
       background: #ffffff;
+      border: 1px solid #cbd5e1;
       padding: 2px;
     }
     .title {
       font-size: 14.5px;
       font-weight: 700;
-      letter-spacing: -0.2px;
+      letter-spacing: -0.3px;
+      color: #0f172a;
     }
     .ver {
-      font-family: "JetBrains Mono", monospace;
+      font-family: "JetBrains Mono", Consolas, monospace;
       font-size: 9.5px;
       color: #64748b;
       margin-top: 1px;
     }
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
     .status-pill {
-      font-family: monospace;
+      font-family: "JetBrains Mono", Consolas, monospace;
       font-size: 9.5px;
-      background: rgba(16, 185, 129, 0.12);
-      color: #34d399;
-      border: 1px solid rgba(16, 185, 129, 0.3);
+      font-weight: 600;
+      background: #ecfdf5;
+      color: #059669;
+      border: 1px solid #a7f3d0;
       padding: 2px 6px;
       border-radius: 4px;
     }
-    .desc {
-      font-size: 11.5px;
-      color: #94a3b8;
-      line-height: 1.5;
-      margin-bottom: 14px;
+    .mini-btn {
+      background: #f8fafc;
+      color: #475569;
+      border: 1px solid #cbd5e1;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.12s ease;
     }
+    .mini-btn:hover {
+      background: #f1f5f9;
+      color: #0f172a;
+      border-color: #94a3b8;
+    }
+
+    /* First-Time Setup Card (Light Theme) */
+    #setup-view {
+      display: none;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    .setup-title {
+      font-size: 12.5px;
+      font-weight: 700;
+      color: #0f172a;
+      margin-bottom: 4px;
+    }
+    .setup-desc {
+      font-size: 11px;
+      color: #475569;
+      line-height: 1.45;
+      margin-bottom: 10px;
+    }
+    .url-input {
+      width: 100%;
+      background: #ffffff;
+      color: #0f172a;
+      border: 1px solid #cbd5e1;
+      border-radius: 5px;
+      padding: 7px 9px;
+      font-size: 11px;
+      font-family: "JetBrains Mono", Consolas, monospace;
+      margin-bottom: 8px;
+      outline: none;
+      transition: border-color 0.12s;
+    }
+    .url-input:focus {
+      border-color: #2563eb;
+    }
+    .error-msg {
+      display: none;
+      font-size: 10.5px;
+      color: #dc2626;
+      margin-top: 6px;
+      font-weight: 500;
+    }
+
+    /* Live Citation Widget Card (Light Theme) */
+    #profile-view {
+      display: none;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    .prof-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 10px;
+    }
+    .prof-name {
+      font-size: 13px;
+      font-weight: 700;
+      color: #0f172a;
+    }
+    .prof-aff {
+      font-size: 10.5px;
+      color: #64748b;
+      margin-top: 1px;
+      max-width: 205px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .stats-row {
+      display: grid;
+      grid-template-columns: 1.25fr 1fr 1fr;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+    .stat-box {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 5px;
+      padding: 8px 9px;
+    }
+    .stat-label {
+      font-size: 9.5px;
+      font-weight: 600;
+      text-transform: uppercase;
+      color: #64748b;
+      margin-bottom: 3px;
+    }
+    .stat-val {
+      font-family: "JetBrains Mono", Consolas, monospace;
+      font-size: 16px;
+      font-weight: 700;
+      color: #0f172a;
+      font-variant-numeric: tabular-nums;
+      display: flex;
+      align-items: baseline;
+      gap: 5px;
+    }
+    .delta-pill {
+      font-family: "JetBrains Mono", Consolas, monospace;
+      font-size: 9.5px;
+      font-weight: 600;
+      padding: 1px 4px;
+      border-radius: 3px;
+    }
+    .delta-up {
+      background: #dcfce7;
+      color: #166534;
+    }
+    .delta-same {
+      background: #f1f5f9;
+      color: #64748b;
+    }
+    .stat-sub {
+      font-family: "JetBrains Mono", Consolas, monospace;
+      font-size: 9.5px;
+      color: #64748b;
+      margin-top: 2px;
+    }
+    .prof-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-top: 8px;
+      border-top: 1px solid #e2e8f0;
+      font-size: 10.5px;
+    }
+    .prof-link {
+      color: #2563eb;
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .prof-link:hover {
+      text-decoration: underline;
+    }
+
+    /* Bottom Navigation Buttons (Light Theme) */
     .actions {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -72,30 +234,46 @@
       font-size: 11.5px;
       font-weight: 600;
       text-decoration: none;
-      transition: all 0.15s;
+      cursor: pointer;
+      transition: all 0.12s ease;
     }
     .btn-primary {
-      background: #f8fafc;
-      color: #090d16;
+      background: #0f172a;
+      color: #ffffff;
+      border: 1px solid #0f172a;
+      width: 100%;
     }
-    .btn-primary:hover { background: #e2e8f0; }
+    .btn-primary:hover {
+      background: #1e293b;
+    }
     .btn-orcid {
-      background: rgba(166, 206, 57, 0.15);
-      color: #a6ce39;
-      border: 1px solid rgba(166, 206, 57, 0.35);
+      background: rgba(166, 206, 57, 0.14);
+      color: #3f6212;
+      border: 1px solid rgba(166, 206, 57, 0.45);
     }
     .btn-orcid:hover {
       background: #a6ce39;
-      color: #090d16;
+      color: #0f172a;
     }
     .btn-secondary {
-      background: #111827;
-      color: #cbd5e1;
-      border: 1px solid #1e293b;
+      background: #f8fafc;
+      color: #334155;
+      border: 1px solid #cbd5e1;
     }
     .btn-secondary:hover {
-      background: #1e293b;
+      background: #f1f5f9;
+      color: #0f172a;
+      border-color: #94a3b8;
+    }
+    .btn-about {
+      background: rgba(37, 99, 235, 0.06);
+      color: #2563eb;
+      border: 1px solid rgba(37, 99, 235, 0.28);
+    }
+    .btn-about:hover {
+      background: #2563eb;
       color: #ffffff;
+      border-color: #2563eb;
     }
   </style>
 </head>
@@ -105,19 +283,70 @@
       <img src="SHlogo.png" onerror="this.src='https://raw.githubusercontent.com/naemazam/ScholarHere/main/SHlogo.png'" alt="ScholarHere" class="logo" />
       <div>
         <div class="title">ScholarHere</div>
-        <div class="ver">TERMINAL v4.5</div>
+        <div class="ver">TERMINAL v4.9</div>
       </div>
     </div>
-    <span class="status-pill">GS + ORCID</span>
+    <div class="header-right">
+      <button id="btn-edit-url" class="mini-btn" title="Change Google Scholar URL" style="display:none;">Edit URL</button>
+      <span class="status-pill" id="p-status">ACTIVE</span>
+    </div>
   </div>
-  <p class="desc">
-    Visit any <strong>Google Scholar</strong> or <strong>ORCID</strong> profile to launch the Metric Evidence Explorer, Author Attribution Audit, and Lead h-index engine.
-  </p>
+
+  <!-- FIRST-TIME SETUP VIEW -->
+  <div id="setup-view">
+    <div class="setup-title">Set Your Google Scholar Profile</div>
+    <p class="setup-desc">
+      Paste your Google Scholar URL once to track your live citation count and growth right inside this popup.
+    </p>
+    <input type="text" id="scholar-url-input" class="url-input" placeholder="https://scholar.google.com/citations?user=..." />
+    <button id="btn-save-url" class="btn btn-primary">Save My Profile</button>
+    <div id="setup-error" class="error-msg">Please enter a valid Google Scholar profile link (containing user=...).</div>
+  </div>
+
+  <!-- SAVED USER CITATION VIEW -->
+  <div id="profile-view">
+    <div class="prof-top">
+      <div>
+        <div class="prof-name" id="p-name">—</div>
+        <div class="prof-aff" id="p-aff">—</div>
+      </div>
+      <button id="btn-refresh" class="mini-btn" title="Refresh Citations">↻ Sync</button>
+    </div>
+
+    <div class="stats-row">
+      <div class="stat-box">
+        <div class="stat-label">Citations</div>
+        <div class="stat-val">
+          <span id="p-cites">0</span>
+          <span id="p-delta" class="delta-pill delta-same">+0</span>
+        </div>
+        <div class="stat-sub" id="p-prev-cites">Last: —</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">h-index</div>
+        <div class="stat-val" id="p-hindex">0</div>
+        <div class="stat-sub" id="p-h5">5y h: —</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">i10-index</div>
+        <div class="stat-val" id="p-i10">0</div>
+        <div class="stat-sub" id="p-cites5">5y: —</div>
+      </div>
+    </div>
+
+    <div class="prof-footer">
+      <span style="color:#64748b;" id="p-updated">Live Telemetry</span>
+      <a href="#" target="_blank" id="link-my-profile" class="prof-link">Open My Profile ↗</a>
+    </div>
+  </div>
+
   <div class="actions">
-    <a href="https://scholar.google.com" target="_blank" class="btn btn-primary">Google Scholar ↗</a>
+    <a href="https://scholar.google.com" target="_blank" class="btn btn-secondary">Google Scholar ↗</a>
     <a href="https://orcid.org" target="_blank" class="btn btn-orcid">ORCID Registry ↗</a>
-    <a href="https://scholarhere.vercel.app/" target="_blank" class="btn btn-secondary">About Us ↗</a>
+    <a href="https://scholarhere.vercel.app/" target="_blank" class="btn btn-about">About Us ↗</a>
     <a href="https://github.com/naemazam/ScholarHere" target="_blank" class="btn btn-secondary">GitHub Repo ↗</a>
   </div>
+
+  <script src="popup.js"></script>
 </body>
 </html>
